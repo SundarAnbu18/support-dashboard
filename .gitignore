@@ -1,4 +1,7 @@
-node_modules
+node_modules/
+dist/
 .env
-uploads/*
-!uploads/.gitkeep
+.DS_Store
+*.log
+backend/uploads/*
+!backend/uploads/.gitkeep
