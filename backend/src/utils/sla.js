@@ -1,5 +1,9 @@
 import { query } from '../config/db.js';
 
+// Statuses configured to stop the SLA clock; kept current by refreshStatuses().
+let pausedStatuses = new Set(['pending']);
+export function setPausedStatuses(keys) { pausedStatuses = new Set(keys); }
+
 const DEFAULT_TARGETS = {
   urgent: { respond_within: 60, resolve_within: 240 },
   high: { respond_within: 240, resolve_within: 480 },
@@ -54,7 +58,7 @@ export function slaStatus(ticket, now = new Date()) {
     const breached = ticket.resolved_at && ticket.due_by && new Date(ticket.resolved_at) > new Date(ticket.due_by);
     return breached ? 'resolved_late' : 'met';
   }
-  if (ticket.status === 'pending') return 'paused';
+  if (pausedStatuses.has(ticket.status)) return 'paused';
   if (ticket.due_by && new Date(ticket.due_by) < now) return 'overdue';
   if (!ticket.first_responded_at && ticket.fr_due_by && new Date(ticket.fr_due_by) < now) return 'response_overdue';
   return 'within';

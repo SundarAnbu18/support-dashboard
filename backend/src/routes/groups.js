@@ -11,7 +11,7 @@ const SELECT = `
   SELECT g.*,
          COALESCE(json_agg(json_build_object('id', u.id, 'name', u.name, 'email', u.email, 'avatar_url', u.avatar_url) ORDER BY u.name)
                   FILTER (WHERE u.id IS NOT NULL), '[]') AS members,
-         (SELECT COUNT(*) FROM tickets t WHERE t.group_id = g.id AND t.status IN ('open','pending') AND t.deleted = FALSE) AS open_tickets
+         (SELECT COUNT(*) FROM tickets t WHERE t.group_id = g.id AND t.status NOT IN ('resolved','closed') AND t.deleted = FALSE) AS open_tickets
     FROM groups g
     LEFT JOIN group_members gm ON gm.group_id = g.id
     LEFT JOIN users u ON u.id = gm.user_id`;

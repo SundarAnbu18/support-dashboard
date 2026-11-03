@@ -6,13 +6,13 @@ import { useToast } from '../../context/ToastContext.jsx';
 import { Spinner, Avatar, Modal, Field, Select, Badge, ConfirmDialog } from '../../components/ui.jsx';
 import { fmtRelative } from '../../utils/format.js';
 
-function AgentModal({ initial, groups, onClose, onSaved }) {
+function AgentModal({ initial, groups, roles, onClose, onSaved }) {
   const toast = useToast();
   const [form, setForm] = useState({ name: '', email: '', password: '', role: 'agent', job_title: '', phone: '', is_active: true, group_ids: (initial?.groups || []).map((g) => g.id), ...initial });
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const save = async () => {
     try {
-      const payload = { ...form }; if (!payload.password) delete payload.password;
+      const payload = { ...form, role_id: form.role_id || null }; if (!payload.password) delete payload.password;
       const r = initial?.id ? await put(`/agents/${initial.id}`, payload) : await post('/agents', payload);
       onSaved(r.data);
     } catch (e) { toast.error(errorMessage(e)); }
@@ -25,7 +25,10 @@ function AgentModal({ initial, groups, onClose, onSaved }) {
           <Field label="Email" required><input className="input" type="email" value={form.email} onChange={set('email')} /></Field>
         </div>
         <div className="form-row">
-          <Field label="Role"><Select value={form.role} onChange={(v) => setForm({ ...form, role: v })} options={['agent', 'admin']} /></Field>
+          {form.role_id ? null : <Field label="Base access"><Select value={form.role} onChange={(v) => setForm({ ...form, role: v })} options={['agent', 'admin']} /></Field>}
+          <Field label="Role" help="A role replaces base access."><Select value={String(form.role_id || '')} placeholder="None (use base access)" onChange={(v) => setForm({ ...form, role_id: v })} options={roles.map((r) => ({ value: String(r.id), label: r.name }))} /></Field>
+        </div>
+        <div className="form-row">
           <Field label={initial?.id ? 'New password (optional)' : 'Password'} required={!initial?.id}><input className="input" type="password" value={form.password || ''} onChange={set('password')} minLength={6} /></Field>
         </div>
         <div className="form-row">
@@ -44,10 +47,11 @@ export default function Agents() {
   const toast = useToast();
   const [agents, setAgents] = useState(null);
   const [groups, setGroups] = useState([]);
+  const [roles, setRoles] = useState([]);
   const [modal, setModal] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const load = () => get('/agents').then((r) => setAgents(r.data));
-  useEffect(() => { load(); get('/groups').then((r) => setGroups(r.data)); }, []);
+  useEffect(() => { load(); get('/groups').then((r) => setGroups(r.data)); get('/config/roles').then((r) => setRoles(r.data)); }, []);
   if (!agents) return <Spinner block />;
   return (
     <div className="card">
@@ -57,7 +61,7 @@ export default function Agents() {
         <tbody>{agents.map((a) => (
           <tr key={a.id}>
             <td><div className="row" style={{ gap: 10 }}><Avatar name={a.name} src={a.avatar_url} /><div><div className="strong">{a.name}</div><div className="muted small">{a.email}{a.job_title && ` · ${a.job_title}`}</div></div></div></td>
-            <td><Badge color={a.role === 'admin' ? 'purple' : 'blue'}>{a.role}</Badge></td>
+            <td><Badge color={a.role === 'admin' ? 'purple' : 'blue'}>{a.role_name || a.role}</Badge>{a.agent_status_name && <div className="muted small mt-1">{a.agent_status_name}</div>}</td>
             <td><div className="row wrap">{a.groups.map((g) => <span key={g.id} className="tag-chip">{g.name}</span>)}</div></td>
             <td className="num">{a.open_tickets}</td><td className="muted small">{a.last_login_at ? fmtRelative(a.last_login_at) : 'Never'}</td>
             <td>{a.is_active ? <Badge color="green">Active</Badge> : <Badge color="gray">Deactivated</Badge>}</td>
@@ -65,7 +69,7 @@ export default function Agents() {
           </tr>
         ))}</tbody>
       </table></div>
-      {modal && <AgentModal initial={modal} groups={groups} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); toast.success('Agent saved'); }} />}
+      {modal && <AgentModal initial={modal} groups={groups} roles={roles} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); toast.success('Agent saved'); }} />}
       {confirm && <ConfirmDialog title="Deactivate agent?" message={`${confirm.name} will no longer be able to sign in. Their open tickets become unassigned.`} danger confirmLabel="Deactivate" onCancel={() => setConfirm(null)} onConfirm={async () => { try { await del(`/agents/${confirm.id}`); load(); } catch (e) { toast.error(errorMessage(e)); } setConfirm(null); }} />}
     </div>
   );

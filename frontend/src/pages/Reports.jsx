@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend, LineChart, Line } from 'recharts';
 import { format, subDays } from 'date-fns';
-import { Download } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Download, SlidersHorizontal } from 'lucide-react';
 import { get } from '../api/client.js';
 import { Spinner, StatCard, Tabs, Avatar, Badge } from '../components/ui.jsx';
 import { fmtHours, fmtMinutes, titleCase } from '../utils/format.js';
@@ -45,7 +46,7 @@ export default function Reports() {
     <div className="content">
       <div className="page-header">
         <div><h1>Reports & analytics</h1><p className="sub">Helpdesk performance for the selected period.</p></div>
-        <div className="page-actions">
+        <div className="page-actions"><Link to="/reports/custom" className="btn"><SlidersHorizontal size={14} /> Custom reports</Link>
           {presets.map(([l, d]) => <button key={l} className="btn btn-sm" onClick={() => { setFrom(format(subDays(new Date(), d), 'yyyy-MM-dd')); setTo(format(new Date(), 'yyyy-MM-dd')); }}>Last {l}</button>)}
           <input type="date" className="input input-sm" value={from} onChange={(e) => setFrom(e.target.value)} /><span className="muted">to</span><input type="date" className="input input-sm" value={to} onChange={(e) => setTo(e.target.value)} />
         </div>

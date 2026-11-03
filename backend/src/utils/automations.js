@@ -1,6 +1,24 @@
 import { query } from '../config/db.js';
 import { logActivity } from './activity.js';
 import { notifyUser, notifyGroup } from './notifications.js';
+import { sendEmail } from './email.js';
+
+// Blocks webhooks aimed at this machine or the private network.
+function isPublicWebhookUrl(raw) {
+  try {
+    const { protocol, hostname } = new URL(raw);
+    if (!['http:', 'https:'].includes(protocol)) return false;
+    return !/^(localhost|0\.|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?$|\[?f[cd])/i.test(hostname);
+  } catch { return false; }
+}
+
+async function fireWebhook(url, ticket) {
+  if (!isPublicWebhookUrl(url)) return { url, ok: false, error: 'URL not allowed' };
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket }), redirect: 'error', signal: AbortSignal.timeout(5000) });
+    return { url, ok: res.ok, status: res.status };
+  } catch (err) { return { url, ok: false, error: err.message }; }
+}
 
 // Fields exposed to automation conditions.
 async function ticketContext(ticket) {
@@ -89,6 +107,8 @@ async function applyActions(actions, ticket, ruleName) {
   let tags = [...(ticket.tags || [])];
   const notes = [];
   const notifications = [];
+  const webhooks = [];
+  const emails = [];
   for (const a of actions || []) {
     switch (a.type) {
       case 'set_priority': updates.priority = a.value; break;
@@ -105,11 +125,13 @@ async function applyActions(actions, ticket, ruleName) {
       case 'notify_agent': if (a.value) notifications.push({ user_id: Number(a.value), message: a.message }); break;
       case 'notify_group': if (a.value) notifications.push({ group_id: Number(a.value), message: a.message }); break;
       case 'notify_assignee': notifications.push({ assignee: true, message: a.message }); break;
+      case 'webhook': if (a.value) webhooks.push(a.value); break;
+      case 'send_email_requester': emails.push({ requester: true, body: a.value }); break;
       default: break;
     }
   }
   if (JSON.stringify(tags) !== JSON.stringify(ticket.tags || [])) updates.tags = tags;
-  return { updates, notes, notifications };
+  return { updates, notes, notifications, webhooks, emails };
 }
 
 // Runs automations for an event against a ticket. Returns the (possibly updated) ticket row.
@@ -125,7 +147,17 @@ export async function runAutomations(event, ticket) {
     const ctx = await ticketContext(current);
     if (!evaluateConditions(rule.conditions, ctx)) continue;
 
-    const { updates, notes, notifications } = await applyActions(rule.actions, current, rule.name);
+    current = await executeActions(rule.actions, current, { label: 'Automation', name: rule.name, action: 'automation' });
+    await query('UPDATE automations SET run_count = run_count + 1, last_run_at = NOW() WHERE id = $1', [rule.id]);
+  }
+  return current;
+}
+
+// Applies an action list to a ticket and records it. Shared by automations and scenarios.
+export async function executeActions(actions, ticket, { label, name, action, actor = null }) {
+  let current = ticket;
+  {
+    const { updates, notes, notifications, webhooks, emails } = await applyActions(actions, current, name);
     const changes = {};
     for (const [k, v] of Object.entries(updates)) {
       if (JSON.stringify(current[k]) !== JSON.stringify(v)) changes[k] = { from: current[k], to: v };
@@ -136,7 +168,8 @@ export async function runAutomations(event, ticket) {
       const sets = keys.map((k, i) => `${k} = $${i + 2}`);
       const vals = keys.map((k) => updates[k]);
       if (updates.status === 'resolved' && !current.resolved_at) { sets.push('resolved_at = NOW()'); }
-      if (updates.status === 'closed' && !current.closed_at) { sets.push('closed_at = NOW()'); }
+      if (updates.status === 'closed' && !current.closed_at) { sets.push('closed_at = NOW()', 'resolved_at = COALESCE(resolved_at, NOW())'); }
+      if (updates.status && !['resolved', 'closed'].includes(updates.status)) { sets.push('resolved_at = NULL', 'closed_at = NULL'); }
       const { rows } = await query(
         `UPDATE tickets SET ${sets.join(', ')} WHERE id = $1 RETURNING *`,
         [current.id, ...vals]
@@ -152,7 +185,7 @@ export async function runAutomations(event, ticket) {
     for (const n of notifications) {
       const payload = {
         type: 'automation',
-        title: `Automation "${rule.name}" on ticket #${current.id}`,
+        title: `${label} "${name}" on ticket #${current.id}`,
         body: n.message || current.subject,
         link: `/tickets/${current.id}`,
       };
@@ -160,10 +193,15 @@ export async function runAutomations(event, ticket) {
       if (n.group_id) await notifyGroup(n.group_id, payload);
       if (n.assignee && current.responder_id) await notifyUser(current.responder_id, payload);
     }
-    if (Object.keys(changes).length || notes.length || notifications.length) {
-      await logActivity(current.id, null, 'automation', { rule: rule.name, changes, notes: notes.length });
+    const webhookResults = [];
+    for (const url of webhooks) webhookResults.push(await fireWebhook(url, current));
+    for (const e of emails) {
+      const { rows: [c] } = await query('SELECT email FROM contacts WHERE id = $1', [current.requester_id]);
+      await sendEmail({ to: c?.email, subject: `Re: ${current.subject} [#${current.id}]`, body: e.body || '', ticketId: current.id });
     }
-    await query('UPDATE automations SET run_count = run_count + 1, last_run_at = NOW() WHERE id = $1', [rule.id]);
+    if (Object.keys(changes).length || notes.length || notifications.length || webhooks.length || emails.length) {
+      await logActivity(current.id, actor, action, { rule: name, changes, notes: notes.length, webhooks: webhookResults });
+    }
   }
   return current;
 }
@@ -175,7 +213,7 @@ export async function runTimeTriggers() {
   );
   if (rules.length === 0) return 0;
   const { rows: tickets } = await query(
-    "SELECT * FROM tickets WHERE status IN ('open','pending') AND deleted = FALSE AND spam = FALSE"
+    "SELECT * FROM tickets WHERE status NOT IN ('resolved','closed') AND deleted = FALSE AND spam = FALSE"
   );
   let touched = 0;
   for (const t of tickets) {

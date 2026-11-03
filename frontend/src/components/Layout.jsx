@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, Link } from 'react-router-dom';
-import { LayoutDashboard, Ticket, Users, Building2, BookOpen, BarChart3, Settings, LogOut, Plus, Bell, Search, ChevronsLeft, ChevronsRight, Headset, User, MessageSquareText } from 'lucide-react';
+import { LayoutDashboard, Ticket, Users, Building2, BookOpen, BarChart3, Settings, LogOut, Plus, Bell, Search, ChevronsLeft, ChevronsRight, Headset, User, MessageSquareText, MessagesSquare, Trophy, ChevronDown, FileText, Mail } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
-import { get, post, patch } from '../api/client.js';
+import { get, post, patch, put } from '../api/client.js';
 import { Avatar, Dropdown, useDebounce } from './ui.jsx';
 import { fmtRelative } from '../utils/format.js';
 import { StatusBadge } from './ui.jsx';
@@ -76,6 +76,20 @@ export function NotificationsMenu({ linkPrefix = '' }) {
   );
 }
 
+// Agent availability; round-robin assignment respects it.
+function AgentStatusMenu() {
+  const { user, refresh } = useAuth();
+  const [statuses, setStatuses] = useState([]);
+  useEffect(() => { get('/config/agent-statuses').then((r) => setStatuses(r.data)).catch(() => {}); }, []);
+  const current = statuses.find((s) => s.id === user?.agent_status_id) || statuses.find((s) => s.is_default);
+  if (!current) return null;
+  return (
+    <Dropdown trigger={<button className="btn btn-sm btn-ghost" aria-label="Set your availability">{current.emoji} {current.name}<ChevronDown size={13} /></button>}>
+      {statuses.map((s) => <button key={s.id} onClick={() => put('/auth/me', { agent_status_id: s.id }).then(refresh)}>{s.emoji} {s.name}</button>)}
+    </Dropdown>
+  );
+}
+
 export default function Layout() {
   const { user, logout, isAdmin } = useAuth();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sd_sidebar') === '1');
@@ -95,8 +109,10 @@ export default function Layout() {
     { to: '/contacts', icon: Users, label: 'Contacts' },
     { to: '/companies', icon: Building2, label: 'Companies' },
     { to: '/solutions', icon: BookOpen, label: 'Knowledge Base' },
+    { to: '/forums', icon: MessagesSquare, label: 'Forums' },
     { to: '/canned-responses', icon: MessageSquareText, label: 'Canned Responses' },
-    { to: '/reports', icon: BarChart3, label: 'Reports' },
+    ...(user?.privileges?.includes('view_reports') ? [{ to: '/reports', icon: BarChart3, label: 'Analytics' }] : []),
+    { to: '/arcade', icon: Trophy, label: 'Arcade' },
   ];
 
   return (
@@ -131,7 +147,15 @@ export default function Layout() {
         <header className="topbar">
           <GlobalSearch />
           <div className="topbar-actions">
-            <Link to="/tickets/new" className="btn btn-primary"><Plus size={16} /> New ticket</Link>
+            <AgentStatusMenu />
+            <Dropdown trigger={<button className="btn btn-primary"><Plus size={16} /> New <ChevronDown size={13} /></button>}>
+              <button onClick={() => navigate('/tickets/new')}><Ticket size={15} /> Ticket</button>
+              <button onClick={() => navigate('/tickets/new?outbound=1')}><Mail size={15} /> Email</button>
+              <button onClick={() => navigate('/contacts?new=1')}><Users size={15} /> Contact</button>
+              <button onClick={() => navigate('/companies?new=1')}><Building2 size={15} /> Company</button>
+              <button onClick={() => navigate('/solutions/articles/new')}><FileText size={15} /> Article</button>
+              <button onClick={() => navigate('/forums?new=1')}><MessagesSquare size={15} /> Forum topic</button>
+            </Dropdown>
             <NotificationsMenu />
             <Dropdown trigger={<button className="icon-btn" style={{ width: 'auto', padding: '0 4px' }}><Avatar name={user?.name} src={user?.avatar_url} /></button>}>
               <div style={{ padding: '8px 10px' }} onClick={(e) => e.stopPropagation()}>

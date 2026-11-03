@@ -37,6 +37,8 @@ Open http://localhost:5173 and sign in.
 
 Database connection settings live in `backend/.env`. The app creates and uses its own `supportdesk` database on your Postgres server; the `postgres` maintenance database is only used to create it.
 
+See [docs/FEATURE_PARITY.md](docs/FEATURE_PARITY.md) for the full feature checklist and what still needs an outside provider.
+
 ## Features
 
 **Tickets**

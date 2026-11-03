@@ -32,6 +32,8 @@ export const AUTOMATION_META = {
   ],
   operators: ['is', 'is_not', 'contains', 'not_contains', 'starts_with', 'ends_with', 'in', 'not_in', 'greater_than', 'less_than', 'is_empty', 'is_not_empty'],
   actions: [
+    { key: 'webhook', label: 'Trigger webhook (POST URL)', value: 'text' },
+    { key: 'send_email_requester', label: 'Email the requester', value: 'textarea' },
     { key: 'set_priority', label: 'Set priority', value: 'select', options: ['low', 'medium', 'high', 'urgent'] },
     { key: 'set_status', label: 'Set status', value: 'select', options: ['open', 'pending', 'resolved', 'closed'] },
     { key: 'set_type', label: 'Set type', value: 'select', options: ['question', 'incident', 'problem', 'feature_request', 'refund', 'other'] },

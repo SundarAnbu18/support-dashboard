@@ -6,6 +6,7 @@ import { useToast } from '../context/ToastContext.jsx';
 import { Spinner, Avatar, StatusBadge, PriorityBadge, ConfirmDialog, Modal, useDebounce } from '../components/ui.jsx';
 import { fmtRelative, fmtDate } from '../utils/format.js';
 import { ContactForm } from './Contacts.jsx';
+import { EntityCustomFields } from './NewTicket.jsx';
 
 export default function ContactDetail() {
   const { id } = useParams();
@@ -57,6 +58,7 @@ export default function ContactDetail() {
           </div>
         </div>
         <aside className="col gap-2">
+          <EntityCustomFields entity="contact" values={c.custom_fields} onSave={(v) => put(`/contacts/${id}`, { custom_fields: v }).then(load).catch((e) => toast.error(errorMessage(e)))} />
           <div className="card"><div className="card-header"><h3>Details</h3></div><div className="card-body">
             <dl className="kv">
               <dt>Email</dt><dd>{c.email || '—'}</dd><dt>Phone</dt><dd>{c.phone || '—'}</dd><dt>Mobile</dt><dd>{c.mobile || '—'}</dd>

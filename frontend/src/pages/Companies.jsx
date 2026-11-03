@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Building2, Search } from 'lucide-react';
-import { get, post, put, errorMessage } from '../api/client.js';
+import { Plus, Building2, Search, Upload, Download } from 'lucide-react';
+import { get, post, put, errorMessage, downloadFile } from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { Spinner, Pagination, EmptyState, Modal, Field, Select, Badge, useDebounce } from '../components/ui.jsx';
 import { fmtRelative, titleCase } from '../utils/format.js';
@@ -41,11 +42,35 @@ export function CompanyForm({ initial, onSaved, onClose }) {
   );
 }
 
+
+// Reads a chosen CSV file and sends it to the import endpoint.
+function ImportExport({ path, name, onDone }) {
+  const toast = useToast();
+  const { user } = useAuth();
+  const onFile = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const { data } = await post(`${path}/import`, { csv: await file.text() });
+      toast.success(`Imported: ${data.created} created, ${data.updated} updated${data.errors.length ? `, ${data.errors.length} skipped` : ''}`);
+      if (data.errors.length) toast.error(data.errors.slice(0, 3).join(' · '));
+      onDone();
+    } catch (err) { toast.error(errorMessage(err)); }
+  };
+  return (
+    <>
+      <label className="btn"><Upload size={15} /> Import<input type="file" accept=".csv,text/csv" hidden onChange={onFile} /></label>
+      {user?.privileges?.includes('export_data') && <button className="btn" onClick={() => downloadFile(`${path}/export`, `${name}.csv`).catch((err) => toast.error(errorMessage(err)))}><Download size={15} /> Export</button>}
+    </>
+  );
+}
+
 export default function Companies() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState(null);
-  const [modal, setModal] = useState(false);
+  const [modal, setModal] = useState(() => new URLSearchParams(window.location.search).has('new'));
   const [q, setQ] = useState('');
   const dq = useDebounce(q, 300);
   const page = Number(params.get('page') || 1);
@@ -57,6 +82,7 @@ export default function Companies() {
         <div><h1>Companies</h1><p className="sub">{data ? `${data.meta.total} accounts` : ''}</p></div>
         <div className="page-actions">
           <div style={{ position: 'relative' }}><Search size={15} style={{ position: 'absolute', left: 10, top: 10, color: 'var(--gray-400)' }} /><input className="input" style={{ paddingLeft: 32, width: 260 }} placeholder="Search companies…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+          <ImportExport path="/companies" name="companies" onDone={load} />
           <button className="btn btn-primary" onClick={() => setModal(true)}><Plus size={16} /> New company</button>
         </div>
       </div>

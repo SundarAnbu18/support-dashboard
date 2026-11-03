@@ -9,10 +9,13 @@ import { titleCase } from '../../utils/format.js';
 function FieldModal({ initial, onClose, onSaved }) {
   const toast = useToast();
   const [form, setForm] = useState({ label: '', field_type: 'text', options: [], required_for_agents: false, required_for_customers: false, visible_to_customers: true, ...initial });
-  const [optText, setOptText] = useState((initial?.options || []).join('\n'));
+  const [optText, setOptText] = useState(Array.isArray(initial?.options) ? initial.options.join('\n') : '');
+  // Dependent fields are edited as one "Parent value: a, b" line per parent option.
+  const [depText, setDepText] = useState(initial?.options && !Array.isArray(initial.options) ? Object.entries(initial.options).map(([k, v]) => `${k}: ${v.join(', ')}`).join('\n') : '');
+  const parseDependent = () => Object.fromEntries(depText.split('\n').map((l) => l.split(':')).filter((p) => p.length > 1 && p[0].trim()).map(([k, ...v]) => [k.trim(), v.join(':').split(',').map((o) => o.trim()).filter(Boolean)]));
   const save = async () => {
     try {
-      const payload = { ...form, options: form.field_type === 'dropdown' ? optText.split('\n').map((s) => s.trim()).filter(Boolean) : [] };
+      const payload = { ...form, options: form.field_type === 'dropdown' ? optText.split('\n').map((s) => s.trim()).filter(Boolean) : form.field_type === 'dependent' ? parseDependent() : [] };
       const r = initial?.id ? await put(`/settings/ticket-fields/${initial.id}`, payload) : await post('/settings/ticket-fields', payload);
       onSaved(r.data);
     } catch (e) { toast.error(errorMessage(e)); }
@@ -22,8 +25,12 @@ function FieldModal({ initial, onClose, onSaved }) {
       <div className="form-grid">
         <div className="form-row">
           <Field label="Label" required><input className="input" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} /></Field>
-          <Field label="Type"><Select value={form.field_type} onChange={(v) => setForm({ ...form, field_type: v })} options={['text', 'textarea', 'number', 'dropdown', 'checkbox', 'date']} /></Field>
+          <Field label="Type"><Select value={form.field_type} onChange={(v) => setForm({ ...form, field_type: v })} options={['text', 'textarea', 'number', 'decimal', 'dropdown', 'dependent', 'checkbox', 'date']} /></Field>
         </div>
+        {form.field_type === 'dependent' && <>
+          <Field label="Parent field key" help="The dropdown this field depends on, such as category"><input className="input" value={form.parent_field || ''} onChange={(e) => setForm({ ...form, parent_field: e.target.value })} /></Field>
+          <Field label="Options" help="One line per parent value. Example: Certificates: Name change, Download issue"><textarea className="textarea" value={depText} onChange={(e) => setDepText(e.target.value)} /></Field>
+        </>}
         {form.field_type === 'dropdown' && <Field label="Options" help="One per line"><textarea className="textarea" value={optText} onChange={(e) => setOptText(e.target.value)} /></Field>}
         <label className="checkbox"><input type="checkbox" checked={form.visible_to_customers} onChange={(e) => setForm({ ...form, visible_to_customers: e.target.checked })} /> Visible to customers in the portal</label>
         <label className="checkbox"><input type="checkbox" checked={form.required_for_agents} onChange={(e) => setForm({ ...form, required_for_agents: e.target.checked })} /> Required for agents</label>
@@ -48,7 +55,7 @@ export default function TicketFields() {
       {fields.length === 0 ? <EmptyState icon={ListPlus} title="No custom fields" /> : (
         <table className="table"><thead><tr><th>Label</th><th>Key</th><th>Type</th><th>Options</th><th>Customers</th><th>Required</th><th /></tr></thead>
           <tbody>{fields.map((f) => (
-            <tr key={f.id}><td className="strong">{f.label}</td><td className="muted small">{f.name}</td><td><Badge color="blue">{titleCase(f.field_type)}</Badge></td><td className="small muted">{(f.options || []).join(', ') || '—'}</td>
+            <tr key={f.id}><td className="strong">{f.label}</td><td className="muted small">{f.name}</td><td><Badge color="blue">{titleCase(f.field_type)}</Badge></td><td className="small muted">{Array.isArray(f.options) ? f.options.join(', ') || '—' : `Depends on ${f.parent_field}`}</td>
               <td>{f.visible_to_customers ? 'Visible' : 'Hidden'}</td><td className="small">{[f.required_for_agents && 'agents', f.required_for_customers && 'customers'].filter(Boolean).join(', ') || '—'}</td>
               <td>{isAdmin && <div className="row" style={{ justifyContent: 'flex-end' }}><button className="icon-btn" onClick={() => setModal(f)}><Pencil size={14} /></button><button className="icon-btn" onClick={() => setConfirm(f)}><Trash2 size={14} /></button></div>}</td></tr>
           ))}</tbody></table>

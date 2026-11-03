@@ -20,6 +20,12 @@ import settingsRoutes from './routes/settings.js';
 import reportRoutes from './routes/reports.js';
 import dashboardRoutes from './routes/dashboard.js';
 import { searchRouter, notificationsRouter, savedViewsRouter } from './routes/misc.js';
+import configRoutes from './routes/config.js';
+import ticketExtraRoutes from './routes/ticketExtras.js';
+import forumRoutes from './routes/forums.js';
+import analyticsRoutes from './routes/analytics.js';
+import inboundRoutes from './routes/inbound.js';
+import { query as dbQuery } from './config/db.js';
 
 const app = express();
 
@@ -40,12 +46,26 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
+// Records who changed configuration. Paths only: request bodies can hold secrets.
+const AUDITED = /^\/api\/(settings|agents|groups|sla-policies|automations|config)\b/;
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && AUDITED.test(req.path)) {
+    res.on('finish', () => {
+      if (res.statusCode < 400 && req.user?.kind === 'user') {
+        dbQuery('INSERT INTO audit_log (user_id, actor_label, method, path, status) VALUES ($1,$2,$3,$4,$5)', [req.user.id, req.user.name, req.method, req.path, res.statusCode]).catch((err) => console.error('[audit]', err.message));
+      }
+    });
+  }
+  next();
+});
+
+app.use('/api', inboundRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/agents', userRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/companies', companyRoutes);
-app.use('/api/tickets', ticketRoutes);
+app.use('/api/tickets', ticketExtraRoutes, ticketRoutes);
 app.use('/api/canned-responses', cannedRoutes);
 app.use('/api/kb', kbRoutes);
 app.use('/api/tags', tagRoutes);
@@ -57,6 +77,9 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/search', searchRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/saved-views', savedViewsRouter);
+app.use('/api/config', configRoutes);
+app.use('/api/forums', forumRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Route not found' }));
 app.use(errorHandler);

@@ -30,6 +30,16 @@ export const put = (url, body) => api.put(url, body).then((r) => r.data);
 export const patch = (url, body) => api.patch(url, body).then((r) => r.data);
 export const del = (url, params) => api.delete(url, { params }).then((r) => r.data);
 
+// Fetches an authenticated CSV/file and hands it to the browser as a download.
+export async function downloadFile(url, filename, body) {
+  const res = body ? await api.post(url, body, { responseType: 'blob' }) : await api.get(url, { responseType: 'blob' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(res.data);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 export function postForm(url, fields, files = []) {
   const fd = new FormData();
   for (const [k, v] of Object.entries(fields)) {

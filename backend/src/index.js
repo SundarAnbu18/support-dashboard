@@ -2,10 +2,12 @@ import app from './app.js';
 import { env } from './config/env.js';
 import { pool } from './config/db.js';
 import { startJobs } from './utils/jobs.js';
+import { refreshStatuses } from './utils/statuses.js';
 
 async function main() {
   try {
     await pool.query('SELECT 1');
+    await refreshStatuses();
     console.log(`Connected to Postgres ${env.db.host}:${env.db.port}/${env.db.database}`);
   } catch (err) {
     console.error('Could not connect to Postgres:', err.message);

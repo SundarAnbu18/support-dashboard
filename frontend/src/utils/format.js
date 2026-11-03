@@ -41,11 +41,26 @@ export const titleCase = (s) => (s ? String(s).replace(/_/g, ' ').replace(/\b\w/
 export const initials = (name = '') => name.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join('') || '?';
 
 export const STATUS_LABELS = { open: 'Open', pending: 'Pending', resolved: 'Resolved', closed: 'Closed' };
+export const CUSTOMER_STATUS_LABELS = {};
 export const PRIORITY_LABELS = { low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent' };
 export const TYPE_OPTIONS = ['question', 'incident', 'problem', 'feature_request', 'refund', 'other'];
 export const SOURCE_OPTIONS = ['email', 'portal', 'phone', 'chat', 'social', 'agent'];
 export const STATUS_OPTIONS = ['open', 'pending', 'resolved', 'closed'];
 export const PRIORITY_OPTIONS = ['low', 'medium', 'high', 'urgent'];
+
+// Custom statuses come from the API; these lists are updated in place so every import sees them.
+export async function loadStatuses() {
+  const res = await fetch(`${import.meta.env.VITE_API_URL || '/api'}/config/ticket-statuses/public`);
+  if (!res.ok) return;
+  const { data } = await res.json();
+  STATUS_OPTIONS.length = 0;
+  for (const s of data) {
+    STATUS_OPTIONS.push(s.key);
+    STATUS_LABELS[s.key] = s.label;
+    CUSTOMER_STATUS_LABELS[s.key] = s.customer_label;
+  }
+}
+export const statusOptions = () => STATUS_OPTIONS.map((s) => ({ value: s, label: STATUS_LABELS[s] || titleCase(s) }));
 
 export const SLA_LABELS = {
   within: 'Within SLA', overdue: 'Overdue', response_overdue: 'Response overdue', paused: 'Paused', met: 'SLA met', resolved_late: 'Resolved late',
@@ -85,6 +100,15 @@ export const activityText = (a) => {
     case 'sla_response_breached': return 'first response SLA was breached';
     case 'sla_resolution_breached': return 'resolution SLA was breached';
     case 'auto_closed': return 'ticket was auto-closed';
+    case 'scenario': return `ran scenario "${d.rule}"`;
+    case 'split_from': return `split this ticket from #${d.ticket}`;
+    case 'split_to': return `split a reply into #${d.ticket}`;
+    case 'linked': return `linked ticket #${d.ticket}`;
+    case 'unlinked': return `unlinked ticket #${d.ticket}`;
+    case 'parent_set': return `made this a child of #${d.ticket}`;
+    case 'parent_removed': return `removed the link to parent #${d.ticket}`;
+    case 'thread_started': return `started the thread "${d.title}"`;
+    case 'converted_to_topic': return 'converted the ticket to a forum topic';
     default: return titleCase(a.action);
   }
 };

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, Inbox, ChevronLeft, ChevronRight } from 'lucide-react';
-import { initials, avatarColor, STATUS_LABELS, PRIORITY_LABELS, SLA_LABELS, titleCase } from '../utils/format.js';
+import { initials, avatarColor, STATUS_LABELS, CUSTOMER_STATUS_LABELS, PRIORITY_LABELS, SLA_LABELS, titleCase } from '../utils/format.js';
 
 export function Spinner({ block }) {
   if (block) return <div className="loading-block"><div className="spinner" /></div>;
@@ -17,7 +17,9 @@ export function Avatar({ name, src, size = '' , title }) {
 
 const STATUS_COLORS = { open: 'badge-red', pending: 'badge-amber', resolved: 'badge-green', closed: 'badge-gray' };
 export function StatusBadge({ status }) {
-  return <span className={`badge ${STATUS_COLORS[status] || 'badge-gray'}`}>{STATUS_LABELS[status] || titleCase(status)}</span>;
+  const onPortal = window.location.pathname.startsWith('/portal');
+  const label = (onPortal && CUSTOMER_STATUS_LABELS[status]) || STATUS_LABELS[status] || titleCase(status);
+  return <span className={`badge ${STATUS_COLORS[status] || 'badge-purple'}`}>{label}</span>;
 }
 
 export function PriorityBadge({ priority, dotOnly }) {

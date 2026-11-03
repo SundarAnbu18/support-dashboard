@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
-import { authenticate, requireAgent } from '../middleware/auth.js';
+import { authenticate, requireAgent, requirePrivilege } from '../middleware/auth.js';
 import { asyncHandler } from '../utils/errors.js';
 
 const router = Router();
-router.use(authenticate, requireAgent);
+router.use(authenticate, requireAgent, requirePrivilege('view_reports'));
 
 function range(q) {
   const to = q.to ? new Date(q.to) : new Date();
@@ -22,7 +22,7 @@ router.get('/overview', asyncHandler(async (req, res) => {
   const [{ rows: [totals] }, { rows: byStatus }, { rows: byPriority }, { rows: byType }, { rows: bySource }, { rows: trend }, { rows: [sla] }, { rows: [csat] }, { rows: byHour }, { rows: byWeekday }] = await Promise.all([
     query(`SELECT COUNT(*) AS created,
                   COUNT(*) FILTER (WHERE t.resolved_at IS NOT NULL) AS resolved,
-                  COUNT(*) FILTER (WHERE t.status IN ('open','pending')) AS unresolved,
+                  COUNT(*) FILTER (WHERE t.status NOT IN ('resolved','closed')) AS unresolved,
                   COUNT(*) FILTER (WHERE t.status = 'closed') AS closed,
                   COUNT(*) FILTER (WHERE t.is_escalated) AS escalated,
                   ROUND(AVG(EXTRACT(EPOCH FROM (t.first_responded_at - t.created_at))/3600)::numeric, 2) AS avg_first_response_hours,
@@ -43,7 +43,7 @@ router.get('/overview', asyncHandler(async (req, res) => {
                   COUNT(*) FILTER (WHERE t.first_responded_at IS NOT NULL AND t.first_responded_at <= t.fr_due_by) AS responded_in_sla,
                   COUNT(*) FILTER (WHERE t.resolved_at IS NOT NULL) AS resolved,
                   COUNT(*) FILTER (WHERE t.resolved_at IS NOT NULL AND t.resolved_at <= t.due_by) AS resolved_in_sla,
-                  COUNT(*) FILTER (WHERE t.status IN ('open','pending') AND t.due_by < NOW()) AS currently_overdue
+                  COUNT(*) FILTER (WHERE t.status NOT IN ('resolved','closed') AND t.due_by < NOW()) AS currently_overdue
              FROM tickets t WHERE ${BASE_FILTER}`, p),
     query(`SELECT COUNT(*) AS responses, ROUND(AVG(r.rating)::numeric, 2) AS avg_rating,
                   COUNT(*) FILTER (WHERE r.rating >= 4) AS positive, COUNT(*) FILTER (WHERE r.rating = 3) AS neutral, COUNT(*) FILTER (WHERE r.rating <= 2) AS negative
@@ -71,7 +71,7 @@ router.get('/agents', asyncHandler(async (req, res) => {
     `SELECT u.id, u.name, u.avatar_url, u.role,
             COUNT(t.id) AS assigned,
             COUNT(t.id) FILTER (WHERE t.resolved_at IS NOT NULL) AS resolved,
-            COUNT(t.id) FILTER (WHERE t.status IN ('open','pending')) AS open,
+            COUNT(t.id) FILTER (WHERE t.status NOT IN ('resolved','closed')) AS open,
             COUNT(t.id) FILTER (WHERE t.resolved_at IS NOT NULL AND t.resolved_at <= t.due_by) AS resolved_in_sla,
             ROUND(AVG(EXTRACT(EPOCH FROM (t.first_responded_at - t.created_at))/3600)::numeric, 2) AS avg_first_response_hours,
             ROUND(AVG(EXTRACT(EPOCH FROM (t.resolved_at - t.created_at))/3600)::numeric, 2) AS avg_resolution_hours,
@@ -94,8 +94,8 @@ router.get('/groups', asyncHandler(async (req, res) => {
     `SELECT g.id, g.name,
             COUNT(t.id) AS assigned,
             COUNT(t.id) FILTER (WHERE t.resolved_at IS NOT NULL) AS resolved,
-            COUNT(t.id) FILTER (WHERE t.status IN ('open','pending')) AS open,
-            COUNT(t.id) FILTER (WHERE t.status IN ('open','pending') AND t.due_by < NOW()) AS overdue,
+            COUNT(t.id) FILTER (WHERE t.status NOT IN ('resolved','closed')) AS open,
+            COUNT(t.id) FILTER (WHERE t.status NOT IN ('resolved','closed') AND t.due_by < NOW()) AS overdue,
             ROUND(AVG(EXTRACT(EPOCH FROM (t.first_responded_at - t.created_at))/3600)::numeric, 2) AS avg_first_response_hours,
             ROUND(AVG(EXTRACT(EPOCH FROM (t.resolved_at - t.created_at))/3600)::numeric, 2) AS avg_resolution_hours
        FROM groups g LEFT JOIN tickets t ON t.group_id = g.id AND t.deleted = FALSE AND t.spam = FALSE AND t.created_at BETWEEN $1 AND $2
@@ -109,7 +109,7 @@ router.get('/companies', asyncHandler(async (req, res) => {
   const { rows } = await query(
     `SELECT co.id, co.name, co.health_score, co.account_tier,
             COUNT(t.id) AS tickets,
-            COUNT(t.id) FILTER (WHERE t.status IN ('open','pending')) AS open,
+            COUNT(t.id) FILTER (WHERE t.status NOT IN ('resolved','closed')) AS open,
             COUNT(t.id) FILTER (WHERE t.priority IN ('high','urgent')) AS high_priority,
             ROUND(AVG(EXTRACT(EPOCH FROM (t.resolved_at - t.created_at))/3600)::numeric, 2) AS avg_resolution_hours,
             (SELECT ROUND(AVG(r.rating)::numeric,2) FROM satisfaction_ratings r JOIN tickets tt ON tt.id = r.ticket_id WHERE tt.company_id = co.id) AS csat

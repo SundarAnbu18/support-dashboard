@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, Link } from 'react-router-dom';
-import { Headset, LogOut, Ticket, BookOpen, Plus, LayoutDashboard } from 'lucide-react';
+import { Headset, LogOut, Ticket, BookOpen, Plus, LayoutDashboard, MessagesSquare } from 'lucide-react';
+import { get } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { Avatar, Dropdown } from './ui.jsx';
 import { NotificationsMenu } from './Layout.jsx';
@@ -7,13 +9,16 @@ import { NotificationsMenu } from './Layout.jsx';
 export default function PortalLayout() {
   const { user, logout, isAgent } = useAuth();
   const navigate = useNavigate();
+  const [brand, setBrand] = useState('Help Center');
+  useEffect(() => { get('/settings/public').then((r) => setBrand(r.data.portal_name || 'Help Center')).catch(() => {}); }, []);
   return (
     <div className="portal-shell">
       <nav className="portal-nav">
         <div className="inner">
-          <Link to="/portal" className="brand"><span className="logo" style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--blue-600)', display: 'grid', placeItems: 'center' }}><Headset size={16} color="#fff" /></span> Help Center</Link>
+          <Link to="/portal" className="brand"><span className="logo" style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--blue-600)', display: 'grid', placeItems: 'center' }}><Headset size={16} color="#fff" /></span> {brand}</Link>
           <div className="links">
             <NavLink to="/portal" end><BookOpen size={15} style={{ verticalAlign: -2, marginRight: 6 }} />Knowledge base</NavLink>
+            <NavLink to="/portal/community"><MessagesSquare size={15} style={{ verticalAlign: -2, marginRight: 6 }} />Community</NavLink>
             {user && <NavLink to="/portal/tickets"><Ticket size={15} style={{ verticalAlign: -2, marginRight: 6 }} />My tickets</NavLink>}
           </div>
           <div className="topbar-actions">

@@ -2,6 +2,7 @@ import { query } from '../config/db.js';
 import { notifyUser, notifyGroup } from './notifications.js';
 import { logActivity } from './activity.js';
 import { runTimeTriggers } from './automations.js';
+import { sendScheduledReports } from '../routes/analytics.js';
 
 // Flags SLA breaches and notifies the assignee / group once per breach.
 export async function checkSlaBreaches() {
@@ -19,7 +20,7 @@ export async function checkSlaBreaches() {
   const { rows: breaches } = await query(
     `UPDATE tickets SET is_escalated = TRUE
       WHERE is_escalated = FALSE AND due_by < NOW()
-        AND status IN ('open','pending') AND deleted = FALSE AND spam = FALSE
+        AND status NOT IN ('resolved','closed') AND deleted = FALSE AND spam = FALSE
       RETURNING id, subject, responder_id, group_id`
   );
   for (const t of breaches) {
@@ -45,6 +46,18 @@ export async function autoCloseResolved() {
   return closed.length;
 }
 
+// Moves long-closed tickets out of the working views.
+export async function archiveClosed() {
+  const { rows } = await query("SELECT value FROM settings WHERE key = 'tickets'");
+  const days = Number(rows[0]?.value?.archive_after_days || 0);
+  if (!days) return 0;
+  const { rowCount } = await query(
+    `UPDATE tickets SET archived = TRUE WHERE status = 'closed' AND archived = FALSE AND closed_at < NOW() - ($1 || ' days')::interval AND deleted = FALSE`,
+    [String(days)]
+  );
+  return rowCount;
+}
+
 export function startJobs() {
   const safe = (name, fn) => async () => {
     try { await fn(); } catch (err) { console.error(`[job:${name}]`, err.message); }
@@ -52,5 +65,7 @@ export function startJobs() {
   setInterval(safe('sla', checkSlaBreaches), 60 * 1000);
   setInterval(safe('time_triggers', runTimeTriggers), 10 * 60 * 1000);
   setInterval(safe('auto_close', autoCloseResolved), 60 * 60 * 1000);
+  setInterval(safe('archive', archiveClosed), 60 * 60 * 1000);
+  setInterval(safe('scheduled_reports', sendScheduledReports), 60 * 60 * 1000);
   setTimeout(safe('sla', checkSlaBreaches), 5000);
 }

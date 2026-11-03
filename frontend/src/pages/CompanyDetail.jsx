@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
+import { EntityCustomFields } from './NewTicket.jsx';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Pencil, Trash2, Building2, ArrowLeft, Globe } from 'lucide-react';
-import { get, del, errorMessage } from '../api/client.js';
+import { get, del, errorMessage, put } from '../api/client.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { Spinner, Avatar, StatusBadge, PriorityBadge, ConfirmDialog, Badge } from '../components/ui.jsx';
 import { fmtRelative, fmtDate, titleCase } from '../utils/format.js';
@@ -47,6 +48,7 @@ export default function CompanyDetail() {
           </div>
         </div>
         <aside className="col gap-2">
+          <EntityCustomFields entity="company" values={c.custom_fields} onSave={(v) => put(`/companies/${id}`, { custom_fields: v }).then(load)} />
           <div className="card"><div className="card-header"><h3>Account</h3></div><div className="card-body">
             <dl className="kv"><dt>Tier</dt><dd>{titleCase(c.account_tier)}</dd><dt>Health</dt><dd>{titleCase(c.health_score)}</dd><dt>Renewal</dt><dd>{fmtDate(c.renewal_date)}</dd><dt>Open tickets</dt><dd>{c.open_ticket_count}</dd><dt>Created</dt><dd>{fmtDate(c.created_at)}</dd></dl>
             {c.notes && <><div className="divider" /><h4>Internal notes</h4><p className="small mt-1" style={{ whiteSpace: 'pre-wrap' }}>{c.notes}</p></>}

@@ -17,6 +17,8 @@ export default function PortalTicketDetail() {
   const [busy, setBusy] = useState(false);
   const [rating, setRating] = useState(0);
   const [feedback, setFeedback] = useState('');
+  const [survey, setSurvey] = useState(null);
+  useEffect(() => { get('/config/surveys/active').then((r) => setSurvey(r.data)).catch(() => {}); }, []);
   const load = useCallback(() => get(`/tickets/${id}`).then((r) => setT(r.data)).catch(() => navigate('/portal/tickets')), [id, navigate]);
   useEffect(() => { load(); }, [load]);
   if (!t) return <Spinner block />;
@@ -36,13 +38,14 @@ export default function PortalTicketDetail() {
           <Conversation items={t.conversations} ticket={t} />
           {resolved && !t.satisfaction && (
             <div className="card mt-3" style={{ borderColor: '#fde68a', background: '#fffbeb' }}><div className="card-body col" style={{ gap: 10 }}>
-              <h3><Star size={16} style={{ verticalAlign: -3 }} /> How did we do?</h3><p className="muted small">Rate your experience with this ticket.</p>
-              <div className="rating-stars">{[1, 2, 3, 4, 5].map((n) => <button key={n} type="button" className={rating >= n ? 'on' : ''} onClick={() => setRating(n)}>★</button>)}</div>
+              <h3><Star size={16} style={{ verticalAlign: -3 }} /> How did we do?</h3><p className="muted small">{survey?.question || 'Rate your experience with this ticket.'}</p>
+              {survey ? <div className="row wrap">{survey.labels.map((label, i) => <button key={label} type="button" className={`btn btn-sm ${rating === i + 1 ? 'btn-primary' : ''}`} aria-pressed={rating === i + 1} onClick={() => setRating(i + 1)}>{label}</button>)}</div>
+                : <div className="rating-stars">{[1, 2, 3, 4, 5].map((n) => <button key={n} type="button" className={rating >= n ? 'on' : ''} onClick={() => setRating(n)}>★</button>)}</div>}
               <textarea className="textarea" style={{ minHeight: 60 }} placeholder="Any comments? (optional)" value={feedback} onChange={(e) => setFeedback(e.target.value)} />
               <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} disabled={!rating} onClick={rate}>Submit rating</button>
             </div></div>
           )}
-          {t.satisfaction && <div className="alert alert-success mt-3"><Star size={16} /> You rated this ticket {t.satisfaction.rating}/5. Thank you!</div>}
+          {t.satisfaction && <div className="alert alert-success mt-3"><Star size={16} /> You rated this ticket {t.satisfaction.answer || `${t.satisfaction.rating}/5`}. Thank you!</div>}
           <div className="reply-box mt-3">
             <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder={resolved ? 'Replying will reopen this ticket…' : 'Write a reply…'} />
             <div className="reply-footer"><label className="btn btn-sm"><Paperclip size={14} /> Attach<input type="file" multiple hidden onChange={(e) => setFiles([...files, ...Array.from(e.target.files)])} /></label>{files.map((f, i) => <span key={i} className="tag-chip">{f.name}<button onClick={() => setFiles(files.filter((_, j) => j !== i))}><X size={12} /></button></span>)}

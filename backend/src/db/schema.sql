@@ -334,3 +334,283 @@ BEGIN
     EXECUTE format('CREATE TRIGGER %I_set_updated_at BEFORE UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION set_updated_at()', t, t);
   END LOOP;
 END $$;
+
+-- Help desk parity additions (additive, safe to re-apply) ---------------------
+
+CREATE TABLE IF NOT EXISTS roles (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  is_default BOOLEAN NOT NULL DEFAULT FALSE,
+  privileges TEXT[] NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO roles (name, description, is_default, privileges) VALUES
+  ('Account Administrator', 'Complete control over the help desk and organisation settings.', TRUE, ARRAY['reply_ticket','delete_ticket','merge_split_ticket','export_data','manage_contacts','manage_kb','moderate_forums','view_reports','manage_admin']),
+  ('Administrator', 'Can configure all features through the Admin area.', TRUE, ARRAY['reply_ticket','delete_ticket','merge_split_ticket','export_data','manage_contacts','manage_kb','moderate_forums','view_reports','manage_admin']),
+  ('Supervisor', 'Can perform all agent activities and access reports.', TRUE, ARRAY['reply_ticket','delete_ticket','merge_split_ticket','export_data','manage_contacts','manage_kb','moderate_forums','view_reports']),
+  ('Agent', 'Can log, view, reply to, update and resolve tickets and manage contacts.', TRUE, ARRAY['reply_ticket','merge_split_ticket','manage_contacts','manage_kb','view_reports']),
+  ('Ticket Collaborator', 'Can work on assigned tickets and add private notes, but cannot reply to customers.', TRUE, ARRAY[]::TEXT[]),
+  ('Analytics Collaborator', 'Can view reports in the Analytics module.', TRUE, ARRAY['view_reports','export_data'])
+ON CONFLICT (name) DO NOTHING;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id INTEGER REFERENCES roles(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS agent_statuses (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  emoji TEXT,
+  accepts_tickets BOOLEAN NOT NULL DEFAULT TRUE,
+  is_default BOOLEAN NOT NULL DEFAULT FALSE,
+  position INTEGER NOT NULL DEFAULT 1
+);
+INSERT INTO agent_statuses (name, emoji, accepts_tickets, is_default, position) VALUES
+  ('Available', '🟢', TRUE, TRUE, 1), ('Busy', '🔴', TRUE, FALSE, 2), ('On a break', '☕', FALSE, FALSE, 3), ('Offline', '⚪', FALSE, FALSE, 4)
+ON CONFLICT (name) DO NOTHING;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_status_id INTEGER REFERENCES agent_statuses(id) ON DELETE SET NULL;
+
+-- Custom ticket statuses replace the fixed CHECK list.
+ALTER TABLE tickets DROP CONSTRAINT IF EXISTS tickets_status_check;
+CREATE TABLE IF NOT EXISTS ticket_statuses (
+  key TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  customer_label TEXT NOT NULL,
+  stops_sla BOOLEAN NOT NULL DEFAULT FALSE,
+  is_default BOOLEAN NOT NULL DEFAULT FALSE,
+  position INTEGER NOT NULL DEFAULT 1
+);
+INSERT INTO ticket_statuses (key, label, customer_label, stops_sla, is_default, position) VALUES
+  ('open', 'Open', 'Being processed', FALSE, TRUE, 1),
+  ('pending', 'Pending', 'Awaiting your reply', TRUE, TRUE, 2),
+  ('resolved', 'Resolved', 'Resolved', FALSE, TRUE, 3),
+  ('closed', 'Closed', 'Closed', FALSE, TRUE, 4),
+  ('on_hold', 'On hold', 'Being processed', TRUE, FALSE, 5),
+  ('user_response_awaited', 'User Response Awaited', 'Awaiting your reply', TRUE, FALSE, 6)
+ON CONFLICT (key) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS products (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  support_email TEXT,
+  portal_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id) ON DELETE SET NULL;
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS parent_ticket_id INTEGER REFERENCES tickets(id) ON DELETE SET NULL;
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS tickets_parent_idx ON tickets(parent_ticket_id);
+
+CREATE TABLE IF NOT EXISTS ticket_links (
+  ticket_a INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  ticket_b INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (ticket_a, ticket_b),
+  CHECK (ticket_a < ticket_b)
+);
+CREATE TABLE IF NOT EXISTS ticket_todos (
+  id SERIAL PRIMARY KEY,
+  ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  is_done BOOLEAN NOT NULL DEFAULT FALSE,
+  due_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ticket_threads (
+  id SERIAL PRIMARY KEY,
+  ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ticket_thread_messages (
+  id SERIAL PRIMARY KEY,
+  thread_id INTEGER NOT NULL REFERENCES ticket_threads(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ticket_mentions (
+  ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (ticket_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS scenarios (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  visibility TEXT NOT NULL DEFAULT 'all' CHECK (visibility IN ('all','group','personal')),
+  group_id INTEGER REFERENCES groups(id) ON DELETE SET NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actions JSONB NOT NULL DEFAULT '[]',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ticket_templates (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  parent_template_id INTEGER REFERENCES ticket_templates(id) ON DELETE CASCADE,
+  subject TEXT,
+  body TEXT,
+  priority TEXT,
+  status TEXT,
+  type TEXT,
+  group_id INTEGER REFERENCES groups(id) ON DELETE SET NULL,
+  responder_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+  tags TEXT[] NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ticket_forms (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  type TEXT,
+  product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+  group_id INTEGER REFERENCES groups(id) ON DELETE SET NULL,
+  field_names TEXT[] NOT NULL DEFAULT '{}',
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  position INTEGER NOT NULL DEFAULT 1
+);
+
+-- Custom fields for contacts and companies; decimal and dependent ticket fields.
+ALTER TABLE ticket_fields DROP CONSTRAINT IF EXISTS ticket_fields_field_type_check;
+ALTER TABLE ticket_fields ADD CONSTRAINT ticket_fields_field_type_check CHECK (field_type IN ('text','textarea','number','decimal','dropdown','dependent','checkbox','date'));
+ALTER TABLE ticket_fields ADD COLUMN IF NOT EXISTS parent_field TEXT;
+CREATE TABLE IF NOT EXISTS entity_fields (
+  id SERIAL PRIMARY KEY,
+  entity TEXT NOT NULL CHECK (entity IN ('contact','company')),
+  name TEXT NOT NULL,
+  label TEXT NOT NULL,
+  field_type TEXT NOT NULL DEFAULT 'text' CHECK (field_type IN ('text','textarea','number','dropdown','checkbox','date')),
+  options JSONB NOT NULL DEFAULT '[]',
+  position INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (entity, name)
+);
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS custom_fields JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS custom_fields JSONB NOT NULL DEFAULT '{}';
+
+CREATE TABLE IF NOT EXISTS surveys (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  question TEXT NOT NULL DEFAULT 'How would you rate your experience?',
+  labels JSONB NOT NULL DEFAULT '["Very poor","Poor","Okay","Good","Excellent"]',
+  is_active BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO surveys (name, is_active) SELECT 'Default Survey', TRUE WHERE NOT EXISTS (SELECT 1 FROM surveys);
+ALTER TABLE satisfaction_ratings ADD COLUMN IF NOT EXISTS survey_id INTEGER REFERENCES surveys(id) ON DELETE SET NULL;
+ALTER TABLE satisfaction_ratings ADD COLUMN IF NOT EXISTS answer TEXT;
+
+CREATE TABLE IF NOT EXISTS email_notifications (
+  key TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  audience TEXT NOT NULL CHECK (audience IN ('requester','agent')),
+  is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL
+);
+INSERT INTO email_notifications (key, label, audience, subject, body) VALUES
+  ('new_ticket_requester', 'New ticket created', 'requester', 'We received your request [#{{ticket.id}}]', 'Hi {{requester.name}},
+
+We have received your request "{{ticket.subject}}" and will get back to you soon.'),
+  ('agent_reply_requester', 'Agent adds a reply', 'requester', 'Re: {{ticket.subject}} [#{{ticket.id}}]', '{{reply.body}}'),
+  ('ticket_resolved_requester', 'Agent resolves the ticket', 'requester', 'Your request has been resolved [#{{ticket.id}}]', 'Hi {{requester.name}},
+
+Your request "{{ticket.subject}}" has been resolved. Reply to this email to reopen it, or rate your experience in the portal.'),
+  ('ticket_assigned_agent', 'Ticket assigned to agent', 'agent', 'Ticket #{{ticket.id}} assigned to you', '"{{ticket.subject}}" has been assigned to you.'),
+  ('requester_reply_agent', 'Requester replies to a ticket', 'agent', 'New reply on #{{ticket.id}}', '{{requester.name}} replied on "{{ticket.subject}}":
+
+{{reply.body}}')
+ON CONFLICT (key) DO NOTHING;
+CREATE TABLE IF NOT EXISTS email_outbox (
+  id SERIAL PRIMARY KEY,
+  ticket_id INTEGER REFERENCES tickets(id) ON DELETE SET NULL,
+  to_email TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'logged' CHECK (status IN ('logged','sent','failed')),
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS mailboxes (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  group_id INTEGER REFERENCES groups(id) ON DELETE SET NULL,
+  product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+  is_default BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS forum_categories (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  position INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS forums (
+  id SERIAL PRIMARY KEY,
+  category_id INTEGER NOT NULL REFERENCES forum_categories(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  forum_type TEXT NOT NULL DEFAULT 'questions' CHECK (forum_type IN ('questions','ideas','problems','announcements')),
+  visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public','logged_in','agents')),
+  position INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS forum_topics (
+  id SERIAL PRIMARY KEY,
+  forum_id INTEGER NOT NULL REFERENCES forums(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'published' CHECK (status IN ('published','waiting','spam')),
+  is_locked BOOLEAN NOT NULL DEFAULT FALSE,
+  is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+  stamp TEXT,
+  views INTEGER NOT NULL DEFAULT 0,
+  ticket_id INTEGER REFERENCES tickets(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS forum_posts (
+  id SERIAL PRIMARY KEY,
+  topic_id INTEGER NOT NULL REFERENCES forum_topics(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'published' CHECK (status IN ('published','waiting','spam')),
+  is_answer BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS forum_votes (
+  topic_id INTEGER NOT NULL REFERENCES forum_topics(id) ON DELETE CASCADE,
+  voter TEXT NOT NULL,
+  PRIMARY KEY (topic_id, voter)
+);
+
+CREATE TABLE IF NOT EXISTS saved_reports (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  folder TEXT,
+  config JSONB NOT NULL DEFAULT '{}',
+  is_shared BOOLEAN NOT NULL DEFAULT FALSE,
+  is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
+  schedule TEXT CHECK (schedule IN ('daily','weekly')),
+  recipients TEXT[] NOT NULL DEFAULT '{}',
+  last_sent_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS audit_log (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor_label TEXT,
+  method TEXT NOT NULL,
+  path TEXT NOT NULL,
+  status INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Reply, StickyNote, Forward, Paperclip, X, Clock, Eye, EyeOff, Merge, Trash2, MoreHorizontal, Lock, Zap, Star, Send, FileText, RotateCcw, Printer, ArrowLeft } from 'lucide-react';
+import { Reply, StickyNote, Forward, Paperclip, X, Clock, Eye, EyeOff, Merge, Trash2, MoreHorizontal, Lock, Zap, Star, Send, FileText, RotateCcw, Printer, ArrowLeft, ChevronLeft, ChevronRight, Scissors, Play, Pencil, MessagesSquare, BookOpen, Users, Keyboard } from 'lucide-react';
 import { get, patch, post, del, postForm, errorMessage } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { Spinner, StatusBadge, PriorityBadge, SlaPill, Avatar, Select, Field, TagInput, Modal, ConfirmDialog, Dropdown, Tabs, Badge } from '../components/ui.jsx';
-import { fmtSmart, fmtDateTime, fmtRelative, fmtDue, fmtMinutes, activityText, titleCase, STATUS_OPTIONS, PRIORITY_OPTIONS, TYPE_OPTIONS, SOURCE_OPTIONS } from '../utils/format.js';
+import { fmtSmart, fmtDateTime, fmtRelative, fmtDue, fmtMinutes, activityText, titleCase, statusOptions, PRIORITY_OPTIONS, TYPE_OPTIONS, SOURCE_OPTIONS } from '../utils/format.js';
+import TicketPanels from '../components/TicketPanels.jsx';
 import { CustomFields } from './NewTicket.jsx';
 
 function AttachmentList({ items, onDelete }) {
@@ -22,7 +23,7 @@ function AttachmentList({ items, onDelete }) {
   );
 }
 
-export function Conversation({ items, ticket, onDelete }) {
+export function Conversation({ items, ticket, onDelete, onSplit }) {
   return (
     <div className="conversation">
       <div className="msg customer">
@@ -48,6 +49,7 @@ export function Conversation({ items, ticket, onDelete }) {
                 {c.kind === 'reply' && !c.user_id && <span className="muted">replied via {titleCase(c.source)}</span>}
                 {c.source === 'automation' && <Badge color="blue"><Zap size={11} /> Automation</Badge>}
                 <span className="when">{fmtSmart(c.created_at)}</span>
+                {onSplit && c.contact_id && c.kind === 'reply' && <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => onSplit(c)} title="Split into a new ticket" aria-label="Split into a new ticket"><Scissors size={13} /></button>}
                 {onDelete && c.kind !== 'reply' && <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => onDelete(c)} title="Delete note"><X size={13} /></button>}
               </div>
               <div className="msg-text">{c.body}</div>
@@ -82,12 +84,53 @@ export default function TicketDetail() {
   const [mergeModal, setMergeModal] = useState(false);
   const [confirm, setConfirm] = useState(null);
   const textRef = useRef(null);
+  const [products, setProducts] = useState([]);
+  const [scenarios, setScenarios] = useState([]);
+  const [scenarioModal, setScenarioModal] = useState(false);
+  const [editModal, setEditModal] = useState(false);
+  const [forumModal, setForumModal] = useState(false);
+  const [articleModal, setArticleModal] = useState(false);
+  const [shortcutHelp, setShortcutHelp] = useState(false);
+  const [viewers, setViewers] = useState([]);
+  const [panelToken, setPanelToken] = useState(0);
+  const canReply = user.privileges?.includes('reply_ticket');
+  const can = (p) => user.privileges?.includes(p);
+  // Order of the last list the agent opened, for previous/next navigation.
+  const listIds = JSON.parse(sessionStorage.getItem('sd_ticket_ids') || '[]');
+  const listIndex = listIds.indexOf(Number(id));
+  const goTo = (offset) => { const next = listIds[listIndex + offset]; if (listIndex >= 0 && next) navigate(`/tickets/${next}`); };
 
-  const load = useCallback(() => get(`/tickets/${id}`).then((r) => setT(r.data)).catch((e) => { toast.error(errorMessage(e)); navigate('/tickets'); }), [id]); // eslint-disable-line
-  useEffect(() => { load(); setBody(''); setFiles([]); setTab('conversation'); }, [load]);
+  const load = useCallback(() => get(`/tickets/${id}`).then((r) => { setT(r.data); setPanelToken((n) => n + 1); }).catch((e) => { toast.error(errorMessage(e)); navigate('/tickets'); }), [id]); // eslint-disable-line
+  useEffect(() => { load(); setBody(''); setFiles([]); setTab('conversation'); setMode(canReply ? 'reply' : 'note'); }, [load]); // eslint-disable-line
   useEffect(() => {
     Promise.all([get('/agents'), get('/groups'), get('/tags'), get('/settings/ticket-fields'), get('/canned-responses')]).then(([a, g, tg, f, c]) => { setAgents(a.data); setGroups(g.data); setTags(tg.data); setFields(f.data); setCanned(c.data); });
+    get('/config/products').then((r) => setProducts(r.data)).catch(() => {});
+    get('/config/scenarios').then((r) => setScenarios(r.data)).catch(() => {});
   }, []);
+
+  // Tells other agents this ticket is open, and shows who else has it open.
+  useEffect(() => {
+    const ping = () => post(`/tickets/${id}/presence`, { replying: !!textRef.current?.value }).then((r) => setViewers(r.data)).catch(() => {});
+    ping();
+    const timer = setInterval(ping, 10000);
+    return () => clearInterval(timer);
+  }, [id]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || document.querySelector('.modal-backdrop')) return;
+      const actions = {
+        r: () => { if (canReply) { setMode('reply'); setTab('conversation'); setTimeout(() => textRef.current?.focus()); } },
+        n: () => { setMode('note'); setTab('conversation'); setTimeout(() => textRef.current?.focus()); },
+        f: () => { if (canReply) { setMode('forward'); setTab('conversation'); setTimeout(() => textRef.current?.focus()); } },
+        w: () => toggleWatch(), m: () => setTimeModal(true), s: () => setScenarioModal(true), e: () => setEditModal(true),
+        j: () => goTo(1), k: () => goTo(-1), '?': () => setShortcutHelp(true),
+      };
+      if (actions[e.key]) { e.preventDefault(); actions[e.key](); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
 
   const update = async (changes) => {
     try { const r = await patch(`/tickets/${id}`, changes); setT((prev) => ({ ...prev, ...r.data })); load(); } catch (e) { toast.error(errorMessage(e)); }
@@ -98,6 +141,8 @@ export default function TicketDetail() {
     setSending(true);
     try {
       const fieldsToSend = { body, status: replyStatus || undefined };
+      // "@Agent Name" in a note notifies that agent and files the ticket under their mentions.
+      if (mode === 'note') fieldsToSend.notify_user_ids = agents.filter((a) => body.toLowerCase().includes(`@${a.name.toLowerCase()}`)).map((a) => a.id);
       if (mode === 'forward') fieldsToSend.to_emails = toEmails.split(',').map((s) => s.trim()).filter(Boolean);
       await postForm(`/tickets/${id}/${mode}`, fieldsToSend, files);
       toast.success(mode === 'reply' ? 'Reply sent' : mode === 'note' ? 'Note added' : 'Forwarded');
@@ -117,6 +162,11 @@ export default function TicketDetail() {
     load();
   };
 
+  const runScenario = async (s) => {
+    try { await post(`/tickets/${id}/scenarios/${s.id}`); toast.success(`Scenario "${s.name}" applied`); setScenarioModal(false); load(); } catch (e) { toast.error(errorMessage(e)); }
+  };
+  const split = (c) => setConfirm({ title: 'Split into a new ticket?', message: 'This reply moves out of this conversation into a new ticket for the same customer.', label: 'Split', run: async () => { const r = await post(`/tickets/${id}/split`, { conversation_id: c.id }); toast.success(`Created ticket #${r.data.id}`); navigate(`/tickets/${r.data.id}`); } });
+
   if (!t) return <div className="content"><Spinner block /></div>;
   const isResolved = ['resolved', 'closed'].includes(t.status);
   const totalMinutes = t.time_entries.reduce((s, e) => s + e.minutes, 0);
@@ -129,7 +179,7 @@ export default function TicketDetail() {
           <h1><span className="ticket-id">#{t.id}</span>{t.subject}{t.is_escalated && <span className="badge badge-red">Escalated</span>}</h1>
           <div className="row wrap small muted mt-1">
             <StatusBadge status={t.status} /><PriorityBadge priority={t.priority} /><span>·</span><span>Created {fmtRelative(t.created_at)} via {titleCase(t.source)}</span><span>·</span>
-            {['open', 'pending'].includes(t.status) ? <><SlaPill status={t.sla_status} dueBy={t.due_by} /><span className={t.sla_status === 'overdue' ? 'strong' : ''} style={t.sla_status === 'overdue' ? { color: 'var(--red-600)' } : {}}>{fmtDue(t.due_by)}</span></> : <span>{titleCase(t.status)} {fmtRelative(t.resolved_at || t.closed_at)}</span>}
+            {!['resolved', 'closed'].includes(t.status) ? <><SlaPill status={t.sla_status} dueBy={t.due_by} /><span className={t.sla_status === 'overdue' ? 'strong' : ''} style={t.sla_status === 'overdue' ? { color: 'var(--red-600)' } : {}}>{fmtDue(t.due_by)}</span></> : <span>{titleCase(t.status)} {fmtRelative(t.resolved_at || t.closed_at)}</span>}
             {t.sla_policy && <span>· SLA: {t.sla_policy.name}</span>}
           </div>
         </div>
@@ -137,19 +187,28 @@ export default function TicketDetail() {
           {!isResolved && <button className="btn" onClick={() => update({ status: 'resolved' })}>Resolve</button>}
           {t.status === 'resolved' && <button className="btn" onClick={() => update({ status: 'closed' })}>Close</button>}
           {isResolved && <button className="btn" onClick={() => update({ status: 'open' })}><RotateCcw size={14} /> Reopen</button>}
+          <div className="row" style={{ gap: 2 }}>
+            <button className="btn" disabled={listIndex <= 0} aria-label="Previous ticket" title="Previous (k)" onClick={() => goTo(-1)}><ChevronLeft size={16} /></button>
+            <button className="btn" disabled={listIndex < 0 || listIndex >= listIds.length - 1} aria-label="Next ticket" title="Next (j)" onClick={() => goTo(1)}><ChevronRight size={16} /></button>
+          </div>
+          <button className="btn" onClick={() => setScenarioModal(true)} title="Execute scenario (s)"><Play size={14} /> Scenario</button>
           <button className="btn" onClick={toggleWatch} title={t.is_watching ? 'Stop watching' : 'Watch ticket'}>{t.is_watching ? <EyeOff size={14} /> : <Eye size={14} />}{t.is_watching ? 'Watching' : 'Watch'}</button>
           <Dropdown trigger={<button className="btn"><MoreHorizontal size={16} /></button>}>
+            <button onClick={() => setEditModal(true)}><Pencil size={15} /> Edit ticket details</button>
             <button onClick={() => setTimeModal(true)}><Clock size={15} /> Log time</button>
-            <button onClick={() => setMergeModal(true)}><Merge size={15} /> Merge tickets into this</button>
+            {can('merge_split_ticket') && <button onClick={() => setMergeModal(true)}><Merge size={15} /> Merge tickets into this</button>}
+            {can('moderate_forums') && <button onClick={() => setForumModal(true)}><MessagesSquare size={15} /> Convert to forum topic</button>}
+            <button onClick={() => setShortcutHelp(true)}><Keyboard size={15} /> Keyboard shortcuts</button>
             <button onClick={() => window.print()}><Printer size={15} /> Print</button>
             {!t.spam && <button onClick={() => update({ spam: true })}><Zap size={15} /> Mark as spam</button>}
             {(t.spam || t.deleted) && <button onClick={() => post(`/tickets/${id}/restore`).then(load)}><RotateCcw size={15} /> Restore</button>}
-            {!t.deleted && <button className="danger" onClick={() => setConfirm({ title: 'Move to trash?', message: 'The ticket can be restored from the Trash view.', danger: true, label: 'Delete', run: async () => { await del(`/tickets/${id}`); toast.success('Ticket moved to trash'); navigate('/tickets'); } })}><Trash2 size={15} /> Delete</button>}
+            {!t.deleted && can('delete_ticket') && <button className="danger" onClick={() => setConfirm({ title: 'Move to trash?', message: 'The ticket can be restored from the Trash view.', danger: true, label: 'Delete', run: async () => { await del(`/tickets/${id}`); toast.success('Ticket moved to trash'); navigate('/tickets'); } })}><Trash2 size={15} /> Delete</button>}
             {t.deleted && user.role === 'admin' && <button className="danger" onClick={() => setConfirm({ title: 'Delete permanently?', message: 'This cannot be undone.', danger: true, label: 'Delete forever', run: async () => { await del(`/tickets/${id}`, { permanent: 'true' }); navigate('/tickets?view=trash'); } })}><Trash2 size={15} /> Delete permanently</button>}
           </Dropdown>
         </div>
       </div>
 
+      {viewers.length > 0 && <div className="collision mb-2"><Users size={14} /> {viewers.map((v) => `${v.name}${v.replying ? ' is replying' : ' is viewing'}`).join(', ')}</div>}
       <div className="detail-layout">
         <div>
           <Tabs active={tab} onChange={setTab} tabs={[
@@ -160,15 +219,15 @@ export default function TicketDetail() {
 
           {tab === 'conversation' && (
             <>
-              <Conversation items={t.conversations} ticket={t} onDelete={(c) => setConfirm({ title: 'Delete this note?', message: 'Private notes and forwards can be removed.', danger: true, label: 'Delete', run: async () => { await del(`/tickets/${id}/conversations/${c.id}`); load(); } })} />
+              <Conversation items={t.conversations} ticket={t} onSplit={can('merge_split_ticket') ? split : undefined} onDelete={(c) => setConfirm({ title: 'Delete this note?', message: 'Private notes and forwards can be removed.', danger: true, label: 'Delete', run: async () => { await del(`/tickets/${id}/conversations/${c.id}`); load(); } })} />
               {t.satisfaction && (
                 <div className="alert alert-success mt-3"><Star size={16} /> Customer rated this ticket {t.satisfaction.rating}/5 {t.satisfaction.feedback && <>· “{t.satisfaction.feedback}”</>}</div>
               )}
               <div className={`reply-box mt-3 ${mode === 'note' ? 'note' : ''}`}>
                 <div className="reply-tabs">
-                  <button className={mode === 'reply' ? 'active' : ''} onClick={() => setMode('reply')}><Reply size={14} /> Reply</button>
+                  {canReply && <button className={mode === 'reply' ? 'active' : ''} onClick={() => setMode('reply')}><Reply size={14} /> Reply</button>}
                   <button className={mode === 'note' ? 'active' : ''} onClick={() => setMode('note')}><StickyNote size={14} /> Private note</button>
-                  <button className={mode === 'forward' ? 'active' : ''} onClick={() => setMode('forward')}><Forward size={14} /> Forward</button>
+                  {canReply && <button className={mode === 'forward' ? 'active' : ''} onClick={() => setMode('forward')}><Forward size={14} /> Forward</button>}
                   <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', paddingRight: 8 }}>
                     <Dropdown trigger={<button className="btn btn-sm btn-ghost"><FileText size={14} /> Canned responses</button>}>
                       <div className="quick-reply-menu">
@@ -176,16 +235,17 @@ export default function TicketDetail() {
                         {canned.map((c) => <button key={c.id} onClick={() => insertCanned(c)}><span className="col" style={{ gap: 0 }}><span>{c.title}</span><span className="muted small">{c.folder}</span></span></button>)}
                       </div>
                     </Dropdown>
+                    <button className="btn btn-sm btn-ghost" onClick={() => setArticleModal(true)}><BookOpen size={14} /> Solution article</button>
                     {user.signature && <button className="btn btn-sm btn-ghost" onClick={() => setBody((b) => b + '\n\n' + user.signature)}>Insert signature</button>}
                   </div>
                 </div>
                 {mode === 'forward' && <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)' }}><input className="input input-sm" placeholder="To: email@example.com, another@example.com" value={toEmails} onChange={(e) => setToEmails(e.target.value)} /></div>}
-                <textarea ref={textRef} value={body} onChange={(e) => setBody(e.target.value)} placeholder={mode === 'reply' ? `Reply to ${t.requester_name}…` : mode === 'note' ? 'Add an internal note visible only to agents…' : 'Add a message to forward with the ticket…'} onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send(); }} />
+                <textarea ref={textRef} value={body} onChange={(e) => setBody(e.target.value)} placeholder={mode === 'reply' ? `Reply to ${t.requester_name}…` : mode === 'note' ? 'Add an internal note visible only to agents. Type @Agent Name to notify someone…' : 'Add a message to forward with the ticket…'} onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send(); }} />
                 <div className="reply-footer">
                   <label className="btn btn-sm"><Paperclip size={14} /> Attach<input type="file" multiple hidden onChange={(e) => setFiles([...files, ...Array.from(e.target.files)])} /></label>
                   {files.map((f, i) => <span key={i} className="tag-chip">{f.name}<button onClick={() => setFiles(files.filter((_, j) => j !== i))}><X size={12} /></button></span>)}
                   <div className="row" style={{ marginLeft: 'auto' }}>
-                    {mode !== 'forward' && <Select small value={replyStatus} onChange={setReplyStatus} placeholder={mode === 'reply' ? `Send & set status (default: ${t.status === 'open' ? 'pending' : t.status})` : 'Keep status'} options={STATUS_OPTIONS.map((s) => ({ value: s, label: `Set as ${titleCase(s)}` }))} />}
+                    {mode !== 'forward' && <Select small value={replyStatus} onChange={setReplyStatus} placeholder={mode === 'reply' ? `Send & set status (default: ${t.status === 'open' ? 'pending' : t.status})` : 'Keep status'} options={statusOptions().map((s) => ({ value: s.value, label: `Set as ${s.label}` }))} />}
                     <button className="btn btn-primary" onClick={send} disabled={sending || !body.trim()}><Send size={14} /> {sending ? 'Sending…' : mode === 'reply' ? 'Send reply' : mode === 'note' ? 'Add note' : 'Forward'}</button>
                   </div>
                 </div>
@@ -223,7 +283,7 @@ export default function TicketDetail() {
         <aside className="col gap-2">
           <div className="card sidebar-card"><div className="card-header"><h3>Properties</h3></div>
             <div className="card-body props">
-              <Field label="Status"><Select value={t.status} onChange={(v) => update({ status: v })} options={STATUS_OPTIONS} /></Field>
+              <Field label="Status"><Select value={t.status} onChange={(v) => update({ status: v })} options={statusOptions()} /></Field>
               <Field label="Priority"><Select value={t.priority} onChange={(v) => update({ priority: v })} options={PRIORITY_OPTIONS} /></Field>
               <Field label="Type"><Select value={t.type || ''} placeholder="—" onChange={(v) => update({ type: v || null })} options={TYPE_OPTIONS} /></Field>
               <Field label="Source"><Select value={t.source} onChange={(v) => update({ source: v })} options={SOURCE_OPTIONS} /></Field>
@@ -232,6 +292,7 @@ export default function TicketDetail() {
                 <Select value={t.responder_id || ''} placeholder="Unassigned" onChange={(v) => update({ responder_id: v || null })} options={agents.filter((a) => a.is_active).map((a) => ({ value: String(a.id), label: a.name }))} />
                 {t.responder_id !== user.id && <button className="btn-link small" style={{ alignSelf: 'flex-start' }} onClick={() => update({ responder_id: user.id })}>Assign to me</button>}
               </Field>
+              {products.length > 0 && <Field label="Product"><Select value={t.product_id || ''} placeholder="—" onChange={(v) => update({ product_id: v || null })} options={products.map((p) => ({ value: String(p.id), label: p.name }))} /></Field>}
               <Field label="Tags"><TagInput value={t.tags || []} onChange={(v) => update({ tags: v })} suggestions={tags.map((x) => x.name)} /></Field>
               <Field label="Due by"><input type="datetime-local" className="input input-sm" value={t.due_by ? new Date(new Date(t.due_by).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''} onChange={(e) => update({ due_by: e.target.value ? new Date(e.target.value).toISOString() : null })} /></Field>
               <CustomFields fields={fields} values={t.custom_fields || {}} onChange={(v) => update({ custom_fields: v })} />
@@ -265,13 +326,64 @@ export default function TicketDetail() {
               {t.merged_tickets.length > 0 && <div className="mt-2"><h4>Merged tickets</h4>{t.merged_tickets.map((m) => <div key={m.id} className="small"><Link to={`/tickets/${m.id}`}>#{m.id}</Link> {m.subject}</div>)}</div>}
             </div>
           </div>
+          <TicketPanels ticketId={id} reloadToken={panelToken} agents={agents} onChanged={load} />
         </aside>
       </div>
 
+      {scenarioModal && <Modal title="Execute scenario" onClose={() => setScenarioModal(false)}>
+        {scenarios.length === 0 ? <p className="muted">No scenarios yet. Create them under Admin, Scenarios.</p> : <div className="col" style={{ gap: 6 }}>{scenarios.map((s) => <button key={s.id} className="btn" style={{ justifyContent: 'flex-start', height: 'auto', padding: '8px 12px' }} onClick={() => runScenario(s)}><span className="col" style={{ gap: 0, alignItems: 'flex-start' }}><strong>{s.name}</strong><span className="muted small">{s.description}</span></span></button>)}</div>}
+      </Modal>}
+      {editModal && <EditDetailsModal ticket={t} onClose={() => setEditModal(false)} onSave={async (changes) => { await update(changes); setEditModal(false); }} />}
+      {forumModal && <ForumModal ticket={t} onClose={() => setForumModal(false)} onDone={(topic) => { setForumModal(false); toast.success('Forum topic created'); navigate(`/forums/topics/${topic.id}`); }} />}
+      {articleModal && <ArticleModal onClose={() => setArticleModal(false)} onPick={(a) => { setBody((b) => `${b}${b ? '\n\n' : ''}${a.title}\n${window.location.origin}/portal/articles/${a.slug}`); setArticleModal(false); textRef.current?.focus(); }} />}
+      {shortcutHelp && <Modal title="Keyboard shortcuts" onClose={() => setShortcutHelp(false)}>
+        <dl className="kv">{[['r', 'Reply'], ['n', 'Add note'], ['f', 'Forward'], ['s', 'Execute scenario'], ['e', 'Edit ticket details'], ['m', 'Log time'], ['w', 'Watch or unwatch'], ['j', 'Next ticket'], ['k', 'Previous ticket'], ['?', 'Show this list']].map(([k, label]) => <><dt key={`${k}-k`}><kbd>{k}</kbd></dt><dd key={`${k}-v`}>{label}</dd></>)}</dl>
+      </Modal>}
       {timeModal && <TimeModal ticketId={id} onClose={() => setTimeModal(false)} onSaved={() => { setTimeModal(false); load(); toast.success('Time logged'); }} />}
       {mergeModal && <MergeModal ticket={t} onClose={() => setMergeModal(false)} onMerged={() => { setMergeModal(false); load(); toast.success('Tickets merged'); }} />}
       {confirm && <ConfirmDialog title={confirm.title} message={confirm.message} danger={confirm.danger} confirmLabel={confirm.label} onCancel={() => setConfirm(null)} onConfirm={async () => { try { await confirm.run(); } catch (e) { toast.error(errorMessage(e)); } setConfirm(null); }} />}
     </div>
+  );
+}
+
+function EditDetailsModal({ ticket, onClose, onSave }) {
+  const [form, setForm] = useState({ subject: ticket.subject, description: ticket.description });
+  return (
+    <Modal title="Edit ticket details" size="lg" onClose={onClose} footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={!form.subject} onClick={() => onSave(form)}>Save</button></>}>
+      <div className="form-grid">
+        <Field label="Subject" required><input className="input" value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} /></Field>
+        <Field label="Description"><textarea className="textarea" style={{ minHeight: 180 }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field>
+      </div>
+    </Modal>
+  );
+}
+
+function ForumModal({ ticket, onClose, onDone }) {
+  const toast = useToast();
+  const [forums, setForums] = useState([]);
+  const [form, setForm] = useState({ forum_id: '', title: ticket.subject });
+  useEffect(() => { get('/forums').then((r) => setForums(r.data.flatMap((c) => c.forums))); }, []);
+  const save = () => post(`/tickets/${ticket.id}/to-forum`, form).then((r) => onDone(r.data)).catch((e) => toast.error(errorMessage(e)));
+  return (
+    <Modal title="Convert to forum topic" onClose={onClose} footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={!form.forum_id} onClick={save}>Create topic</button></>}>
+      <p className="muted mb-2">The ticket stays open. Its description is posted publicly, so check it holds no private details.</p>
+      <div className="form-grid">
+        <Field label="Forum" required><Select value={form.forum_id} placeholder="Choose…" onChange={(v) => setForm({ ...form, forum_id: v })} options={forums.map((f) => ({ value: String(f.id), label: f.name }))} /></Field>
+        <Field label="Title"><input className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
+      </div>
+    </Modal>
+  );
+}
+
+function ArticleModal({ onClose, onPick }) {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState([]);
+  useEffect(() => { get('/kb/articles', { q: q || undefined, status: 'published', per_page: 10 }).then((r) => setResults(r.data)).catch(() => {}); }, [q]);
+  return (
+    <Modal title="Insert a solution article" onClose={onClose}>
+      <input className="input mb-2" autoFocus placeholder="Search articles…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="col" style={{ gap: 6 }}>{results.map((a) => <button key={a.id} className="btn" style={{ justifyContent: 'flex-start' }} onClick={() => onPick(a)}><span className="truncate">{a.title}</span></button>)}{results.length === 0 && <span className="muted">No articles found.</span>}</div>
+    </Modal>
   );
 }
 

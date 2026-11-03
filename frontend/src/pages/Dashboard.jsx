@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from 'recharts';
-import { AlertTriangle, Clock, Inbox, UserX, CheckCircle2, Flame, Star, PauseCircle } from 'lucide-react';
+import { AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from 'recharts';
+import { AlertTriangle, Clock, Inbox, UserX, CheckCircle2, Flame, Star, PauseCircle, CircleDot, MailWarning } from 'lucide-react';
 import { get } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
-import { Spinner, StatCard, StatusBadge, PriorityBadge, SlaPill, Avatar, EmptyState } from '../components/ui.jsx';
+import { Spinner, StatCard, StatusBadge, PriorityBadge, SlaPill, Avatar, EmptyState, Select } from '../components/ui.jsx';
 import { fmtRelative, fmtDue, activityText, titleCase } from '../utils/format.js';
 import { format } from 'date-fns';
 
@@ -36,6 +36,64 @@ function MiniList({ title, items, empty, extra, link }) {
   );
 }
 
+// Percent change against yesterday, or nothing when yesterday has no number to compare.
+function Delta({ now, before, lowerIsBetter }) {
+  const a = Number(now);
+  const b = Number(before);
+  if (now === null || before === null || !b) return null;
+  const pct = Math.round(((a - b) / b) * 100);
+  if (!pct) return null;
+  const good = lowerIsBetter ? pct < 0 : pct > 0;
+  return <span className="small" style={{ color: good ? 'var(--green-600)' : 'var(--red-600)' }}>{pct > 0 ? '▲' : '▼'} {Math.abs(pct)}% vs yesterday</span>;
+}
+
+function TodayOverview({ go }) {
+  const [filters, setFilters] = useState({ group_id: '', product_id: '' });
+  const [lookups, setLookups] = useState({ groups: [], products: [] });
+  const [d, setD] = useState(null);
+  useEffect(() => { Promise.all([get('/groups'), get('/config/products')]).then(([g, p]) => setLookups({ groups: g.data, products: p.data })); }, []);
+  useEffect(() => { get('/dashboard/today', { group_id: filters.group_id || undefined, product_id: filters.product_id || undefined }).then((r) => setD(r.data)); }, [filters]);
+  if (!d) return <Spinner block />;
+  const c = d.tiles;
+  const hourly = d.hourly.map((h) => ({ hour: h.hour, Today: Number(h.today), Yesterday: Number(h.yesterday) }));
+  return (
+    <>
+      <div className="row wrap mb-2">
+        <Select small aria-label="Filter by group" value={filters.group_id} placeholder="All groups" onChange={(v) => setFilters({ ...filters, group_id: v })} options={lookups.groups.map((g) => ({ value: String(g.id), label: g.name }))} />
+        <Select small aria-label="Filter by product" value={filters.product_id} placeholder="All products" onChange={(v) => setFilters({ ...filters, product_id: v })} options={lookups.products.map((p) => ({ value: String(p.id), label: p.name }))} />
+      </div>
+      <div className="grid grid-6 mb-3">
+        <StatCard label="Unresolved" value={c.unresolved} icon={Inbox} onClick={go('unresolved')} />
+        <StatCard label="Overdue" value={c.overdue} tone={Number(c.overdue) ? 'danger' : 'ok'} icon={AlertTriangle} onClick={go('overdue')} />
+        <StatCard label="Due today" value={c.due_today} tone={Number(c.due_today) ? 'warn' : ''} icon={Clock} onClick={go('due_today')} />
+        <StatCard label="Open" value={c.open} icon={CircleDot} onClick={go('open')} />
+        <StatCard label="On hold" value={c.on_hold} icon={PauseCircle} onClick={go('on_hold')} />
+        <StatCard label="Unassigned" value={c.unassigned} tone={Number(c.unassigned) ? 'warn' : ''} icon={UserX} onClick={go('unassigned')} />
+      </div>
+      <div className="grid grid-3 mb-3" style={{ gridTemplateColumns: '2fr 1fr 1fr' }}>
+        <div className="card chart-card">
+          <div className="card-header"><h3>Today's trends</h3><span className="muted small">Tickets created by hour</span></div>
+          <div className="card-body"><ResponsiveContainer width="100%" height="100%">
+            <LineChart data={hourly} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="hour" tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fontSize: 11 }} /><Tooltip /><Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
+              <Line type="monotone" dataKey="Today" stroke="#2563eb" strokeWidth={2} dot={false} /><Line type="monotone" dataKey="Yesterday" stroke="#94a3b8" strokeWidth={2} strokeDasharray="4 3" dot={false} />
+            </LineChart>
+          </ResponsiveContainer></div>
+        </div>
+        <div className="card"><div className="card-header"><h3>Today so far</h3></div><div className="card-body col" style={{ gap: 12 }}>
+          {[['Received', d.today.received, d.yesterday.received, ''], ['Resolved', d.today.resolved, d.yesterday.resolved, ''], ['Avg first response', d.today.avg_first_response_minutes, d.yesterday.avg_first_response_minutes, ' min', true], ['Resolved within SLA', d.today.sla_pct, d.yesterday.sla_pct, '%']].map(([label, now, before, unit, lower]) => (
+            <div key={label}><div className="muted small">{label}</div><div className="row-between"><strong style={{ fontSize: 18 }}>{now ?? '—'}{now !== null ? unit : ''}</strong><Delta now={now} before={before} lowerIsBetter={lower} /></div></div>
+          ))}
+        </div></div>
+        <div className="card"><div className="card-header"><h3>Unresolved by group</h3>{d.undelivered > 0 && <Link to="/undelivered" className="small row" style={{ gap: 4, color: 'var(--red-600)' }}><MailWarning size={13} /> {d.undelivered} undelivered</Link>}</div>
+          <div className="card-body tight"><table className="table"><thead><tr><th>Group</th><th className="num">Open</th><th className="num">Unresolved</th></tr></thead>
+            <tbody>{d.by_group.map((g) => <tr key={g.id || 'none'}><td>{g.name}</td><td className="num">{g.open}</td><td className="num strong">{g.unresolved}</td></tr>)}{d.by_group.length === 0 && <tr><td colSpan={3} className="muted">Nothing unresolved.</td></tr>}</tbody></table></div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -53,14 +111,7 @@ export default function Dashboard() {
         <div className="page-actions"><span className="muted small">{format(new Date(), 'EEEE, MMMM d, yyyy')}</span></div>
       </div>
 
-      <div className="grid grid-6 mb-3">
-        <StatCard label="Unresolved" value={c.unresolved} icon={Inbox} onClick={go('unresolved')} hint={`${c.created_today} created today`} />
-        <StatCard label="Overdue" value={c.overdue} tone={Number(c.overdue) ? 'danger' : 'ok'} icon={AlertTriangle} onClick={go('overdue')} hint="Past resolution SLA" />
-        <StatCard label="Due today" value={c.due_today} tone={Number(c.due_today) ? 'warn' : ''} icon={Clock} onClick={go('due_today')} />
-        <StatCard label="On hold" value={c.on_hold} icon={PauseCircle} onClick={go('on_hold')} hint="Waiting on customer" />
-        <StatCard label="Unassigned" value={c.unassigned} tone={Number(c.unassigned) ? 'warn' : ''} icon={UserX} onClick={go('unassigned')} />
-        <StatCard label="My open" value={c.my_open} icon={CheckCircle2} onClick={go('my_open')} hint={`${c.resolved_today} resolved today`} />
-      </div>
+      <TodayOverview go={go} />
 
       <div className="grid grid-3 mb-3" style={{ gridTemplateColumns: '2fr 1fr 1fr' }}>
         <div className="card chart-card">
@@ -87,7 +138,7 @@ export default function Dashboard() {
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie data={data.by_status.map((d) => ({ name: titleCase(d.label), value: Number(d.value), key: d.label }))} dataKey="value" innerRadius={55} outerRadius={85} paddingAngle={2}>
-                  {data.by_status.map((d) => <Cell key={d.label} fill={STATUS_COLORS[d.label]} />)}
+                  {data.by_status.map((d) => <Cell key={d.label} fill={STATUS_COLORS[d.label] || '#7c3aed'} />)}
                 </Pie>
                 <Tooltip /><Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
               </PieChart>

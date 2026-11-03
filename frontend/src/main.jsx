@@ -5,8 +5,10 @@ import App from './App.jsx';
 import { AuthProvider } from './context/AuthContext.jsx';
 import { ToastProvider } from './context/ToastContext.jsx';
 import './index.css';
+import { loadStatuses } from './utils/format.js';
 
-ReactDOM.createRoot(document.getElementById('root')).render(
+// Render even if the API is down, using the built-in statuses.
+loadStatuses().catch(() => {}).finally(() => ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
       <ToastProvider>
@@ -16,4 +18,4 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       </ToastProvider>
     </BrowserRouter>
   </React.StrictMode>
-);
+));

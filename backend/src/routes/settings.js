@@ -8,8 +8,11 @@ const router = Router();
 
 const DEFAULT_SETTINGS = {
   helpdesk: { name: 'SupportDesk', portal_name: 'Help Center', support_email: 'support@supportdesk.local', primary_color: '#2563eb', language: 'en', time_zone: 'UTC', portal_signup_enabled: true },
-  tickets: { default_priority: 'low', default_status: 'open', auto_close_after_days: 7, allow_customer_close: true, csat_enabled: true, agent_collision: true },
+  tickets: { default_priority: 'low', default_status: 'open', auto_close_after_days: 7, archive_after_days: 0, allow_customer_close: true, csat_enabled: true, agent_collision: true },
   notifications: { notify_assignee: true, notify_group_on_new: true, notify_requester_on_reply: true },
+  security: { min_password_length: 8, signup_domains: [] },
+  forums: { moderate_customer_posts: true },
+  arcade: { enabled: true, resolve_points: 10, sla_bonus: 5, fast_reply_bonus: 5, csat_bonus: 15 },
 };
 
 // Public branding for the login/portal pages.
@@ -81,16 +84,16 @@ router.post('/ticket-fields', requireAdmin, asyncHandler(async (req, res) => {
   requireFields(b, ['label', 'field_type']);
   const name = slugify(b.name || b.label).replace(/-/g, '_');
   const { rows } = await query(
-    `INSERT INTO ticket_fields (name, label, field_type, options, required_for_agents, required_for_customers, visible_to_customers, position)
-     VALUES ($1,$2,$3,$4,COALESCE($5,FALSE),COALESCE($6,FALSE),COALESCE($7,TRUE),COALESCE($8,(SELECT COALESCE(MAX(position),0)+1 FROM ticket_fields))) RETURNING *`,
-    [name, b.label, b.field_type, JSON.stringify(b.options || []), b.required_for_agents, b.required_for_customers, b.visible_to_customers, b.position || null]
+    `INSERT INTO ticket_fields (name, label, field_type, options, required_for_agents, required_for_customers, visible_to_customers, position, parent_field)
+     VALUES ($1,$2,$3,$4,COALESCE($5,FALSE),COALESCE($6,FALSE),COALESCE($7,TRUE),COALESCE($8,(SELECT COALESCE(MAX(position),0)+1 FROM ticket_fields)),$9) RETURNING *`,
+    [name, b.label, b.field_type, JSON.stringify(b.options || []), b.required_for_agents, b.required_for_customers, b.visible_to_customers, b.position || null, b.parent_field || null]
   );
   res.status(201).json({ data: rows[0] });
 }));
 router.put('/ticket-fields/:id', requireAdmin, asyncHandler(async (req, res) => {
   const b = { ...req.body };
   if (b.options !== undefined) b.options = JSON.stringify(b.options);
-  const { sets, values } = buildUpdate(b, ['label', 'field_type', 'options', 'required_for_agents', 'required_for_customers', 'visible_to_customers', 'position']);
+  const { sets, values } = buildUpdate(b, ['label', 'field_type', 'options', 'required_for_agents', 'required_for_customers', 'visible_to_customers', 'position', 'parent_field']);
   if (!sets.length) throw badRequest('Nothing to update');
   values.push(req.params.id);
   const { rows } = await query(`UPDATE ticket_fields SET ${sets.join(', ')} WHERE id = $${values.length} RETURNING *`, values);

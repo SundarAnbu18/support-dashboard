@@ -32,6 +32,10 @@ import PortalArticle from './pages/portal/PortalArticle.jsx';
 import PortalTickets from './pages/portal/PortalTickets.jsx';
 import PortalTicketDetail from './pages/portal/PortalTicketDetail.jsx';
 import PortalNewTicket from './pages/portal/PortalNewTicket.jsx';
+import Forums, { ForumTopic } from './pages/Forums.jsx';
+import ReportBuilder, { Arcade } from './pages/Analytics.jsx';
+import FeedbackForm from './pages/FeedbackForm.jsx';
+import { Roles, AgentStatuses, TicketStatuses, TicketForms, Scenarios, TicketTemplates, Products, EntityFields, Surveys, EmailNotifications, Channels, Security, AccountExports, Outbox } from './pages/admin/ConfigPages.jsx';
 
 function RequireAgent() {
   const { user, loading, isAgent } = useAuth();
@@ -61,6 +65,7 @@ export default function App() {
       <Route path="/" element={<Home />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/feedback" element={<FeedbackForm />} />
 
       <Route element={<RequireAgent />}>
         <Route element={<Layout />}>
@@ -77,6 +82,11 @@ export default function App() {
           <Route path="/solutions/articles/:id" element={<ArticleEditor />} />
           <Route path="/canned-responses" element={<CannedResponses />} />
           <Route path="/reports" element={<Reports />} />
+          <Route path="/reports/custom" element={<ReportBuilder />} />
+          <Route path="/arcade" element={<Arcade />} />
+          <Route path="/forums" element={<Forums />} />
+          <Route path="/forums/topics/:id" element={<ForumTopic />} />
+          <Route path="/undelivered" element={<div className="content"><Outbox failedOnly /></div>} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<General />} />
@@ -87,6 +97,19 @@ export default function App() {
             <Route path="tags" element={<Tags />} />
             <Route path="business-hours" element={<BusinessHours />} />
             <Route path="ticket-fields" element={<TicketFields />} />
+            <Route path="roles" element={<Roles />} />
+            <Route path="agent-statuses" element={<AgentStatuses />} />
+            <Route path="ticket-statuses" element={<TicketStatuses />} />
+            <Route path="ticket-forms" element={<TicketForms />} />
+            <Route path="scenarios" element={<Scenarios />} />
+            <Route path="ticket-templates" element={<TicketTemplates />} />
+            <Route path="products" element={<Products />} />
+            <Route path="entity-fields" element={<EntityFields />} />
+            <Route path="surveys" element={<Surveys />} />
+            <Route path="email-notifications" element={<EmailNotifications />} />
+            <Route path="channels" element={<Channels />} />
+            <Route path="security" element={<Security />} />
+            <Route path="exports" element={<AccountExports />} />
           </Route>
         </Route>
       </Route>
@@ -94,6 +117,8 @@ export default function App() {
       <Route path="/portal" element={<PortalLayout />}>
         <Route index element={<PortalHome />} />
         <Route path="articles/:slug" element={<PortalArticle />} />
+        <Route path="community" element={<Forums base="/portal/community" />} />
+        <Route path="community/topics/:id" element={<ForumTopic base="/portal/community" />} />
         <Route element={<RequireUser />}>
           <Route path="tickets" element={<PortalTickets />} />
           <Route path="tickets/new" element={<PortalNewTicket />} />

@@ -3,12 +3,22 @@ import bcrypt from 'bcryptjs';
 import { query } from '../config/db.js';
 import { authenticate, requireAgent, requireAdmin } from '../middleware/auth.js';
 import { asyncHandler, notFound, badRequest, HttpError } from '../utils/errors.js';
-import { requireFields, buildUpdate, toBool } from '../utils/helpers.js';
+import { requireFields, buildUpdate, toBool, toInt } from '../utils/helpers.js';
+import { checkPassword } from './auth.js';
+
+// A custom role decides whether the agent has admin access.
+async function baseRoleFor(roleId, fallback) {
+  if (!roleId) return fallback;
+  const { rows: [r] } = await query('SELECT privileges FROM roles WHERE id = $1', [roleId]);
+  if (!r) throw badRequest('Role not found');
+  return r.privileges.includes('manage_admin') ? 'admin' : 'agent';
+}
 
 const router = Router();
 router.use(authenticate, requireAgent);
 
-const USER_COLS = `u.id, u.name, u.email, u.role, u.avatar_url, u.phone, u.job_title, u.time_zone, u.signature, u.is_active, u.last_login_at, u.created_at`;
+const USER_COLS = `u.id, u.name, u.email, u.role, u.avatar_url, u.phone, u.job_title, u.time_zone, u.signature, u.is_active, u.last_login_at, u.created_at, u.role_id, u.agent_status_id,
+  (SELECT name FROM roles r WHERE r.id = u.role_id) AS role_name, (SELECT name FROM agent_statuses s WHERE s.id = u.agent_status_id) AS agent_status_name`;
 
 router.get('/', asyncHandler(async (req, res) => {
   const { q, active } = req.query;
@@ -19,7 +29,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const { rows } = await query(
     `SELECT ${USER_COLS},
             COALESCE(json_agg(json_build_object('id', g.id, 'name', g.name)) FILTER (WHERE g.id IS NOT NULL), '[]') AS groups,
-            (SELECT COUNT(*) FROM tickets t WHERE t.responder_id = u.id AND t.status IN ('open','pending') AND t.deleted = FALSE) AS open_tickets
+            (SELECT COUNT(*) FROM tickets t WHERE t.responder_id = u.id AND t.status NOT IN ('resolved','closed') AND t.deleted = FALSE) AS open_tickets
        FROM users u
        LEFT JOIN group_members gm ON gm.user_id = u.id
        LEFT JOIN groups g ON g.id = gm.group_id
@@ -40,7 +50,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   );
   if (!rows[0]) throw notFound('Agent');
   const { rows: stats } = await query(
-    `SELECT COUNT(*) FILTER (WHERE status IN ('open','pending')) AS open,
+    `SELECT COUNT(*) FILTER (WHERE status NOT IN ('resolved','closed')) AS open,
             COUNT(*) FILTER (WHERE status IN ('resolved','closed')) AS resolved,
             COUNT(*) AS total
        FROM tickets WHERE responder_id = $1 AND deleted = FALSE`,
@@ -50,14 +60,17 @@ router.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 router.post('/', requireAdmin, asyncHandler(async (req, res) => {
-  const { name, email, password, role = 'agent', phone, job_title, time_zone, group_ids = [] } = req.body;
+  const { name, email, password, phone, job_title, time_zone, group_ids = [] } = req.body;
   requireFields(req.body, ['name', 'email', 'password']);
+  const roleId = toInt(req.body.role_id);
+  const role = await baseRoleFor(roleId, req.body.role || 'agent');
   if (!['admin', 'agent'].includes(role)) throw badRequest('Invalid role');
+  await checkPassword(password);
   const hash = await bcrypt.hash(password, 10);
   const { rows } = await query(
-    `INSERT INTO users (name, email, password_hash, role, phone, job_title, time_zone)
-     VALUES ($1, LOWER($2), $3, $4, $5, $6, COALESCE($7, 'UTC')) RETURNING *`,
-    [name, email, hash, role, phone || null, job_title || null, time_zone || null]
+    `INSERT INTO users (name, email, password_hash, role, phone, job_title, time_zone, role_id)
+     VALUES ($1, LOWER($2), $3, $4, $5, $6, COALESCE($7, 'UTC'), $8) RETURNING *`,
+    [name, email, hash, role, phone || null, job_title || null, time_zone || null, roleId]
   );
   for (const gid of group_ids) {
     await query('INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [gid, rows[0].id]);
@@ -71,9 +84,11 @@ router.put('/:id', asyncHandler(async (req, res) => {
   const isSelf = targetId === req.user.id;
   if (!isSelf && req.user.role !== 'admin') throw new HttpError(403, 'Only admins can edit other agents');
   const body = { ...req.body };
-  if (req.user.role !== 'admin') { delete body.role; delete body.is_active; }
+  if (req.user.role !== 'admin') { delete body.role; delete body.role_id; delete body.is_active; }
+  if (body.role_id !== undefined) { body.role_id = toInt(body.role_id); body.role = await baseRoleFor(body.role_id, body.role || 'agent'); }
+  if (body.password) await checkPassword(body.password);
   if (body.email) body.email = String(body.email).toLowerCase();
-  const { sets, values, nextIndex } = buildUpdate(body, ['name', 'email', 'role', 'phone', 'job_title', 'time_zone', 'signature', 'avatar_url', 'is_active']);
+  const { sets, values, nextIndex } = buildUpdate(body, ['name', 'email', 'role', 'role_id', 'phone', 'job_title', 'time_zone', 'signature', 'avatar_url', 'is_active']);
   if (body.password) {
     sets.push(`password_hash = $${values.length + 1}`);
     values.push(await bcrypt.hash(body.password, 10));

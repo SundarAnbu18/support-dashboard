@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
-import { authenticate, optionalAuth, requireAgent, isAgent } from '../middleware/auth.js';
+import { authenticate, optionalAuth, requireAgent, requirePrivilegeToWrite, isAgent } from '../middleware/auth.js';
 import { asyncHandler, notFound, badRequest } from '../utils/errors.js';
 import { requireFields, buildUpdate, slugify, toArray, toInt } from '../utils/helpers.js';
 
@@ -68,7 +68,7 @@ router.post('/portal/articles/:slug/feedback', optionalAuth, asyncHandler(async 
 }));
 
 // ---------------- agent management
-router.use(authenticate, requireAgent);
+router.use(authenticate, requireAgent, requirePrivilegeToWrite('manage_kb'));
 
 router.get('/categories', asyncHandler(async (_req, res) => {
   const { rows: categories } = await query('SELECT * FROM kb_categories ORDER BY position, name');

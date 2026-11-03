@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { query, withTransaction } from '../config/db.js';
-import { authenticate, isAgent, isCustomer } from '../middleware/auth.js';
+import { authenticate, isAgent, isCustomer, requirePrivilege } from '../middleware/auth.js';
 import { asyncHandler, notFound, badRequest, forbidden } from '../utils/errors.js';
 import { requireFields, pagination, toArray, toInt, toBool, normalizeBody, STATUSES, PRIORITIES, TYPES, SOURCES } from '../utils/helpers.js';
 import { applySla, computeDueDates, slaStatus } from '../utils/sla.js';
@@ -8,6 +8,8 @@ import { runAutomations } from '../utils/automations.js';
 import { logActivity } from '../utils/activity.js';
 import { notifyUser, notifyGroup, notifyContact } from '../utils/notifications.js';
 import { upload, fileRecord } from '../utils/upload.js';
+import { sendTicketEmail, sendEmail } from '../utils/email.js';
+import { sendCsv } from '../utils/csv.js';
 
 const router = Router();
 router.use(authenticate);
@@ -16,7 +18,7 @@ const LIST_SELECT = `
   SELECT t.*,
          c.name AS requester_name, c.email AS requester_email, c.avatar_url AS requester_avatar,
          u.name AS responder_name, u.avatar_url AS responder_avatar,
-         g.name AS group_name, co.name AS company_name,
+         g.name AS group_name, co.name AS company_name, p.name AS product_name,
          (SELECT COUNT(*) FROM conversations cv WHERE cv.ticket_id = t.id AND cv.is_private = FALSE) AS reply_count,
          (SELECT COUNT(*) FROM attachments a WHERE a.ticket_id = t.id) AS attachment_count,
          (SELECT MAX(cv.created_at) FROM conversations cv WHERE cv.ticket_id = t.id) AS last_reply_at,
@@ -25,7 +27,8 @@ const LIST_SELECT = `
     JOIN contacts c ON c.id = t.requester_id
     LEFT JOIN users u ON u.id = t.responder_id
     LEFT JOIN groups g ON g.id = t.group_id
-    LEFT JOIN companies co ON co.id = t.company_id`;
+    LEFT JOIN companies co ON co.id = t.company_id
+    LEFT JOIN products p ON p.id = t.product_id`;
 
 function decorate(t) {
   return { ...t, sla_status: slaStatus(t) };
@@ -89,8 +92,9 @@ async function autoAssign(groupId) {
   const { rows: g } = await query('SELECT auto_assign FROM groups WHERE id = $1', [groupId]);
   if (!g[0]?.auto_assign) return null;
   const { rows } = await query(
-    `SELECT u.id, (SELECT COUNT(*) FROM tickets t WHERE t.responder_id = u.id AND t.status IN ('open','pending') AND t.deleted = FALSE) AS load
-       FROM users u JOIN group_members gm ON gm.user_id = u.id WHERE gm.group_id = $1 AND u.is_active = TRUE ORDER BY load ASC, u.id ASC LIMIT 1`,
+    `SELECT u.id, (SELECT COUNT(*) FROM tickets t WHERE t.responder_id = u.id AND t.status NOT IN ('resolved','closed') AND t.deleted = FALSE) AS load
+       FROM users u JOIN group_members gm ON gm.user_id = u.id LEFT JOIN agent_statuses st ON st.id = u.agent_status_id
+      WHERE gm.group_id = $1 AND u.is_active = TRUE AND COALESCE(st.accepts_tickets, TRUE) ORDER BY load ASC, u.id ASC LIMIT 1`,
     [groupId]
   );
   return rows[0]?.id || null;
@@ -102,19 +106,22 @@ router.get('/counts', asyncHandler(async (req, res) => {
   const scope = isCustomer(req.user) ? `AND requester_id = ${Number(req.user.id)} AND deleted = FALSE AND spam = FALSE` : '';
   const { rows } = await query(
     `SELECT
-       COUNT(*) FILTER (WHERE status IN ('open','pending') AND deleted = FALSE AND spam = FALSE) AS unresolved,
+       COUNT(*) FILTER (WHERE status NOT IN ('resolved','closed') AND deleted = FALSE AND spam = FALSE) AS unresolved,
        COUNT(*) FILTER (WHERE status = 'open' AND deleted = FALSE AND spam = FALSE) AS open,
-       COUNT(*) FILTER (WHERE status = 'pending' AND deleted = FALSE AND spam = FALSE) AS pending,
+       COUNT(*) FILTER (WHERE status NOT IN ('open','resolved','closed') AND deleted = FALSE AND spam = FALSE) AS pending,
        COUNT(*) FILTER (WHERE status = 'resolved' AND deleted = FALSE AND spam = FALSE) AS resolved,
        COUNT(*) FILTER (WHERE status = 'closed' AND deleted = FALSE AND spam = FALSE) AS closed,
-       COUNT(*) FILTER (WHERE status IN ('open','pending') AND due_by < NOW() AND deleted = FALSE AND spam = FALSE) AS overdue,
-       COUNT(*) FILTER (WHERE status IN ('open','pending') AND due_by::date = CURRENT_DATE AND deleted = FALSE AND spam = FALSE) AS due_today,
-       COUNT(*) FILTER (WHERE status IN ('open','pending') AND responder_id IS NULL AND deleted = FALSE AND spam = FALSE) AS unassigned,
-       COUNT(*) FILTER (WHERE status IN ('open','pending') AND responder_id = $1 AND deleted = FALSE AND spam = FALSE) AS my_open,
+       COUNT(*) FILTER (WHERE status NOT IN ('resolved','closed') AND due_by < NOW() AND deleted = FALSE AND spam = FALSE) AS overdue,
+       COUNT(*) FILTER (WHERE status NOT IN ('resolved','closed') AND due_by::date = CURRENT_DATE AND deleted = FALSE AND spam = FALSE) AS due_today,
+       COUNT(*) FILTER (WHERE status NOT IN ('resolved','closed') AND responder_id IS NULL AND deleted = FALSE AND spam = FALSE) AS unassigned,
+       COUNT(*) FILTER (WHERE status NOT IN ('resolved','closed') AND responder_id = $1 AND deleted = FALSE AND spam = FALSE) AS my_open,
        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours' AND deleted = FALSE AND spam = FALSE) AS new_today,
        COUNT(*) FILTER (WHERE spam = TRUE AND deleted = FALSE) AS spam,
        COUNT(*) FILTER (WHERE deleted = TRUE) AS trash,
-       COUNT(*) FILTER (WHERE deleted = FALSE AND spam = FALSE) AS all_tickets,
+       COUNT(*) FILTER (WHERE deleted = FALSE AND spam = FALSE AND archived = FALSE) AS all_tickets,
+       COUNT(*) FILTER (WHERE archived = TRUE AND deleted = FALSE) AS archive,
+       COUNT(*) FILTER (WHERE created_by_user_id = $1 AND deleted = FALSE AND spam = FALSE) AS raised,
+       COUNT(*) FILTER (WHERE id IN (SELECT ticket_id FROM ticket_mentions WHERE user_id = $1) AND deleted = FALSE) AS mentioned,
        COUNT(*) FILTER (WHERE id IN (SELECT ticket_id FROM ticket_watchers WHERE user_id = $1) AND deleted = FALSE) AS watching
      FROM tickets WHERE TRUE ${scope}`,
     [me]
@@ -123,25 +130,27 @@ router.get('/counts', asyncHandler(async (req, res) => {
 }));
 
 // ---------------------------------------------------------------- list
-router.get('/', asyncHandler(async (req, res) => {
+function buildListFilter(req) {
   const q = req.query;
-  const { page, perPage, offset } = pagination(q, { per_page: 30 });
   const where = [];
   const params = [];
   scopeForUser(req.user, where, params);
 
   const view = q.view || 'all';
   const me = isAgent(req.user) ? req.user.id : 0;
-  const notTrash = 't.deleted = FALSE AND t.spam = FALSE';
+  const notTrash = 't.deleted = FALSE AND t.spam = FALSE AND t.archived = FALSE';
   switch (view) {
-    case 'unresolved': where.push(`t.status IN ('open','pending') AND ${notTrash}`); break;
-    case 'new_and_my_open': where.push(`t.status IN ('open','pending') AND (t.responder_id IS NULL OR t.responder_id = ${me}) AND ${notTrash}`); break;
-    case 'my_open': where.push(`t.status IN ('open','pending') AND t.responder_id = ${me} AND ${notTrash}`); break;
-    case 'unassigned': where.push(`t.status IN ('open','pending') AND t.responder_id IS NULL AND ${notTrash}`); break;
-    case 'overdue': where.push(`t.status IN ('open','pending') AND t.due_by < NOW() AND ${notTrash}`); break;
-    case 'due_today': where.push(`t.status IN ('open','pending') AND t.due_by::date = CURRENT_DATE AND ${notTrash}`); break;
+    case 'unresolved': where.push(`t.status NOT IN ('resolved','closed') AND ${notTrash}`); break;
+    case 'new_and_my_open': where.push(`t.status NOT IN ('resolved','closed') AND (t.responder_id IS NULL OR t.responder_id = ${me}) AND ${notTrash}`); break;
+    case 'my_open': where.push(`t.status NOT IN ('resolved','closed') AND t.responder_id = ${me} AND ${notTrash}`); break;
+    case 'unassigned': where.push(`t.status NOT IN ('resolved','closed') AND t.responder_id IS NULL AND ${notTrash}`); break;
+    case 'overdue': where.push(`t.status NOT IN ('resolved','closed') AND t.due_by < NOW() AND ${notTrash}`); break;
+    case 'due_today': where.push(`t.status NOT IN ('resolved','closed') AND t.due_by::date = CURRENT_DATE AND ${notTrash}`); break;
     case 'open': where.push(`t.status = 'open' AND ${notTrash}`); break;
-    case 'on_hold': case 'pending': where.push(`t.status = 'pending' AND ${notTrash}`); break;
+    case 'on_hold': case 'pending': where.push(`t.status NOT IN ('open','resolved','closed') AND ${notTrash}`); break;
+    case 'raised': where.push(`t.created_by_user_id = ${me} AND t.deleted = FALSE AND t.spam = FALSE`); break;
+    case 'mentioned': where.push(`t.id IN (SELECT ticket_id FROM ticket_mentions WHERE user_id = ${me}) AND t.deleted = FALSE`); break;
+    case 'archive': where.push('t.archived = TRUE AND t.deleted = FALSE'); break;
     case 'resolved': where.push(`t.status = 'resolved' AND ${notTrash}`); break;
     case 'closed': where.push(`t.status = 'closed' AND ${notTrash}`); break;
     case 'watching': where.push(`t.id IN (SELECT ticket_id FROM ticket_watchers WHERE user_id = ${me}) AND t.deleted = FALSE`); break;
@@ -167,6 +176,11 @@ router.get('/', asyncHandler(async (req, res) => {
   if (q.requester_id) { params.push(toInt(q.requester_id)); where.push(`t.requester_id = $${params.length}`); }
   if (q.company_id) { params.push(toInt(q.company_id)); where.push(`t.company_id = $${params.length}`); }
   const tags = toArray(q.tags || q.tag); if (tags.length) { params.push(tags); where.push(`t.tags && $${params.length}::text[]`); }
+  const products = toArray(q.product_id).map(Number).filter(Boolean); if (products.length) { params.push(products); where.push(`t.product_id = ANY($${params.length}::int[])`); }
+  for (const [key, column] of [['due', 't.due_by'], ['fr_due', 't.fr_due_by'], ['resolved', 't.resolved_at'], ['closed', 't.closed_at']]) {
+    if (q[`${key}_from`]) { params.push(q[`${key}_from`]); where.push(`${column} >= $${params.length}`); }
+    if (q[`${key}_to`]) { params.push(q[`${key}_to`]); where.push(`${column} <= $${params.length}::date + INTERVAL '1 day'`); }
+  }
   if (q.created_from) { params.push(q.created_from); where.push(`t.created_at >= $${params.length}`); }
   if (q.created_to) { params.push(q.created_to); where.push(`t.created_at <= $${params.length}::date + INTERVAL '1 day'`); }
   if (q.q) {
@@ -175,7 +189,20 @@ router.get('/', asyncHandler(async (req, res) => {
     where.push(`(t.subject ILIKE $${params.length} OR t.description ILIKE $${params.length} OR c.name ILIKE $${params.length} OR c.email ILIKE $${params.length}${idMatch ? ` OR t.id = ${Number(idMatch[1])}` : ''})`);
   }
 
-  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  return { whereSql: where.length ? 'WHERE ' + where.join(' AND ') : '', params };
+}
+
+// Full export of the current view and filters, not just the visible page.
+router.get('/export', requirePrivilege('export_data'), asyncHandler(async (req, res) => {
+  const { whereSql, params } = buildListFilter(req);
+  const { rows } = await query(`${LIST_SELECT} ${whereSql} ORDER BY t.created_at DESC LIMIT 50000`, params);
+  sendCsv(res, 'tickets.csv', rows, ['id', 'subject', 'status', 'priority', 'type', 'source', 'requester_name', 'requester_email', 'responder_name', 'group_name', 'company_name', 'product_name', 'tags', 'created_at', 'due_by', 'fr_due_by', 'first_responded_at', 'resolved_at', 'closed_at', 'time_spent_minutes']);
+}));
+
+router.get('/', asyncHandler(async (req, res) => {
+  const q = req.query;
+  const { page, perPage, offset } = pagination(q, { per_page: 30 });
+  const { whereSql, params } = buildListFilter(req);
   const sortMap = {
     created_at: 't.created_at', updated_at: 't.updated_at', due_by: 't.due_by', status: 't.status',
     priority: "CASE t.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END",
@@ -199,11 +226,14 @@ router.post('/', upload.array('attachments', 10), asyncHandler(async (req, res) 
     ? (await query('SELECT * FROM contacts WHERE id = $1', [req.user.id])).rows[0]
     : await findOrCreateRequester(b);
 
+  // Customers route through a published form; they never choose a group directly.
+  const { rows: [form] } = customer && toInt(b.form_id) ? await query('SELECT * FROM ticket_forms WHERE id = $1 AND is_active = TRUE', [toInt(b.form_id)]) : { rows: [] };
   const priority = PRIORITIES.includes(b.priority) ? b.priority : 'low';
   const status = !customer && STATUSES.includes(b.status) ? b.status : 'open';
-  const type = TYPES.includes(b.type) ? b.type : null;
+  const type = TYPES.includes(b.type) ? b.type : (form?.type || null);
   const source = customer ? 'portal' : (SOURCES.includes(b.source) ? b.source : 'agent');
-  const groupId = customer ? null : toInt(b.group_id);
+  const groupId = customer ? form?.group_id ?? null : toInt(b.group_id);
+  const productId = customer ? form?.product_id ?? null : toInt(b.product_id);
   let responderId = customer ? null : toInt(b.responder_id);
   if (!responderId) responderId = await autoAssign(groupId);
 
@@ -213,11 +243,11 @@ router.post('/', upload.array('attachments', 10), asyncHandler(async (req, res) 
   let ticket = await withTransaction(async (client) => {
     const { rows } = await client.query(
       `INSERT INTO tickets (subject, description, status, priority, type, source, requester_id, responder_id, group_id, company_id,
-                            tags, cc_emails, custom_fields, sla_policy_id, fr_due_by, due_by, created_by_user_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+                            tags, cc_emails, custom_fields, sla_policy_id, fr_due_by, due_by, created_by_user_id, product_id, parent_ticket_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
       [b.subject, b.description || '', status, priority, type, source, requester.id, responderId, groupId, requester.company_id,
        toArray(b.tags), toArray(b.cc_emails), JSON.stringify(b.custom_fields || {}), sla.sla_policy_id, sla.fr_due_by, sla.due_by,
-       isAgent(req.user) ? req.user.id : null]
+       isAgent(req.user) ? req.user.id : null, productId, customer ? null : toInt(b.parent_ticket_id)]
     );
     const t = rows[0];
     await logActivity(t.id, req.user, 'created', { status, priority, source }, client);
@@ -226,6 +256,22 @@ router.post('/', upload.array('attachments', 10), asyncHandler(async (req, res) 
 
   await saveAttachments(req.files, { ticketId: ticket.id, user: req.user });
   ticket = await runAutomations('ticket_created', ticket);
+  await sendTicketEmail('new_ticket_requester', ticket);
+  if (ticket.responder_id && ticket.responder_id !== req.user.id) await sendTicketEmail('ticket_assigned_agent', ticket);
+
+  // A parent template creates its child tickets along with the parent.
+  if (!customer && toInt(b.template_id)) {
+    const { rows: children } = await query('SELECT * FROM ticket_templates WHERE parent_template_id = $1 ORDER BY id', [toInt(b.template_id)]);
+    for (const tpl of children) {
+      const childSla = await applySla({ priority: tpl.priority || ticket.priority, type: tpl.type, source: ticket.source, group_id: tpl.group_id, company_id: ticket.company_id, created_at: new Date() });
+      const { rows: [child] } = await query(
+        `INSERT INTO tickets (subject, description, status, priority, type, source, requester_id, responder_id, group_id, company_id, tags, sla_policy_id, fr_due_by, due_by, created_by_user_id, product_id, parent_ticket_id)
+         VALUES ($1,$2,'open',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+        [tpl.subject || tpl.name, tpl.body || '', tpl.priority || ticket.priority, tpl.type, ticket.source, ticket.requester_id, tpl.responder_id, tpl.group_id, ticket.company_id, tpl.tags, childSla.sla_policy_id, childSla.fr_due_by, childSla.due_by, req.user.id, tpl.product_id || ticket.product_id, ticket.id]
+      );
+      await logActivity(child.id, req.user, 'created', { priority: tpl.priority || ticket.priority, parent: ticket.id });
+    }
+  }
 
   if (ticket.responder_id && ticket.responder_id !== req.user.id) {
     await notifyUser(ticket.responder_id, { type: 'ticket_assigned', title: `Ticket #${ticket.id} assigned to you`, body: ticket.subject, link: `/tickets/${ticket.id}` });
@@ -251,6 +297,7 @@ router.post('/bulk', asyncHandler(async (req, res) => {
   if (TYPES.includes(action.type)) updates.type = action.type;
   if (action.responder_id !== undefined) updates.responder_id = toInt(action.responder_id);
   if (action.group_id !== undefined) updates.group_id = toInt(action.group_id);
+  if (action.delete && !req.user.privileges.includes('delete_ticket')) throw forbidden('Your role does not allow deleting tickets');
   if (action.delete) updates.deleted = true;
   if (action.restore) updates.deleted = false;
   if (action.spam !== undefined) updates.spam = !!action.spam;
@@ -260,7 +307,7 @@ router.post('/bulk', asyncHandler(async (req, res) => {
   const sets = keys.map((k, i) => `${k} = $${i + 2}`);
   if (updates.status === 'resolved') sets.push('resolved_at = COALESCE(resolved_at, NOW())');
   if (updates.status === 'closed') sets.push('closed_at = COALESCE(closed_at, NOW())');
-  if (updates.status === 'open' || updates.status === 'pending') sets.push('resolved_at = NULL, closed_at = NULL');
+  if (updates.status && !['resolved', 'closed'].includes(updates.status)) sets.push('resolved_at = NULL, closed_at = NULL');
   if (action.add_tags) { sets.push(`tags = (SELECT ARRAY(SELECT DISTINCT unnest(tags || $${keys.length + 2}::text[])))`); }
   const values = keys.map((k) => updates[k]);
   if (action.add_tags) values.push(toArray(action.add_tags));
@@ -327,6 +374,8 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     if (b.source !== undefined) updates.source = b.source;
     if (b.responder_id !== undefined) updates.responder_id = toInt(b.responder_id);
     if (b.group_id !== undefined) updates.group_id = toInt(b.group_id);
+    if (b.product_id !== undefined) updates.product_id = toInt(b.product_id);
+    if (b.archived !== undefined) updates.archived = toBool(b.archived);
     if (b.requester_id !== undefined) updates.requester_id = toInt(b.requester_id);
     if (b.company_id !== undefined) updates.company_id = toInt(b.company_id);
     if (b.tags !== undefined) updates.tags = toArray(b.tags);
@@ -337,6 +386,12 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     if (b.spam !== undefined) updates.spam = toBool(b.spam);
     if (b.deleted !== undefined) updates.deleted = toBool(b.deleted);
     if (b.is_escalated !== undefined) updates.is_escalated = toBool(b.is_escalated);
+  }
+
+  // A parent cannot be finished while its child tickets are still open.
+  if (['resolved', 'closed'].includes(updates.status) && !['resolved', 'closed'].includes(t.status)) {
+    const { rows: [open] } = await query("SELECT COUNT(*) FROM tickets WHERE parent_ticket_id = $1 AND status NOT IN ('resolved','closed') AND deleted = FALSE", [t.id]);
+    if (Number(open.count)) throw badRequest(`Resolve the ${open.count} open child ticket(s) first`);
   }
 
   const changes = {};
@@ -359,7 +414,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   if (changes.status) {
     if (updates.status === 'resolved') sets.push('resolved_at = NOW()');
     if (updates.status === 'closed') sets.push('closed_at = NOW()', 'resolved_at = COALESCE(resolved_at, NOW())');
-    if (updates.status === 'open' || updates.status === 'pending') sets.push('resolved_at = NULL', 'closed_at = NULL');
+    if (!['resolved', 'closed'].includes(updates.status)) sets.push('resolved_at = NULL', 'closed_at = NULL');
   }
   if (changes.requester_id) {
     const { rows } = await query('SELECT company_id FROM contacts WHERE id = $1', [updates.requester_id]);
@@ -375,7 +430,9 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 
   if (changes.responder_id && updated.responder_id && updated.responder_id !== req.user.id) {
     await notifyUser(updated.responder_id, { type: 'ticket_assigned', title: `Ticket #${t.id} assigned to you`, body: updated.subject, link: `/tickets/${t.id}` });
+    await sendTicketEmail('ticket_assigned_agent', updated);
   }
+  if (changes.status && updated.status === 'resolved' && !isCustomer(req.user)) await sendTicketEmail('ticket_resolved_requester', updated);
   if (changes.status && (updated.status === 'resolved' || updated.status === 'closed') && !isCustomer(req.user)) {
     await notifyContact(t.requester_id, { type: 'ticket_resolved', title: `Your ticket #${t.id} has been ${updated.status}`, body: 'Let us know how we did by rating your experience.', link: `/portal/tickets/${t.id}` });
   }
@@ -385,6 +442,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 
 router.delete('/:id', asyncHandler(async (req, res) => {
   if (!isAgent(req.user)) throw forbidden();
+  if (!req.user.privileges.includes('delete_ticket')) throw forbidden('Your role does not allow deleting tickets');
   const t = await loadTicket(req.params.id, req.user);
   if (req.query.permanent === 'true' && req.user.role === 'admin') {
     await query('DELETE FROM tickets WHERE id = $1', [t.id]);
@@ -409,6 +467,7 @@ async function addConversation(req, res, kind) {
   requireFields(b, ['body']);
   const agent = isAgent(req.user);
   if (!agent && kind !== 'reply') throw forbidden('Customers can only post replies');
+  if (agent && kind !== 'note' && !req.user.privileges.includes('reply_ticket')) throw forbidden('Your role allows private notes only');
   const isPrivate = kind === 'note' ? (b.is_private === undefined ? true : toBool(b.is_private)) : false;
 
   const { rows: [conv] } = await query(
@@ -427,7 +486,7 @@ async function addConversation(req, res, kind) {
       values.push(newStatus); sets.push(`status = $${values.length}`);
       if (newStatus === 'resolved') sets.push('resolved_at = NOW()');
       if (newStatus === 'closed') sets.push('closed_at = NOW()', 'resolved_at = COALESCE(resolved_at, NOW())');
-      if (newStatus === 'open' || newStatus === 'pending') sets.push('resolved_at = NULL', 'closed_at = NULL');
+      if (!['resolved', 'closed'].includes(newStatus)) sets.push('resolved_at = NULL', 'closed_at = NULL');
     }
     if (!t.responder_id) { values.push(req.user.id); sets.push(`responder_id = $${values.length}`); }
   } else if (!agent) {
@@ -444,13 +503,19 @@ async function addConversation(req, res, kind) {
 
   if (agent && kind === 'reply') {
     await notifyContact(t.requester_id, { type: 'agent_reply', title: `New reply on your ticket #${t.id}`, body: t.subject, link: `/portal/tickets/${t.id}` });
+    await sendTicketEmail('agent_reply_requester', t, { body: b.body });
+  }
+  if (kind === 'forward') {
+    for (const to of toArray(b.to_emails)) await sendEmail({ to, subject: `Fwd: ${t.subject} [#${t.id}]`, body: `${b.body}\n\n---\n${t.description}`, ticketId: t.id });
   }
   if (!agent) {
     const payload = { type: 'customer_reply', title: `${req.user.name} replied on #${t.id}`, body: t.subject, link: `/tickets/${t.id}` };
     if (t.responder_id) await notifyUser(t.responder_id, payload); else await notifyGroup(t.group_id, payload);
+    await sendTicketEmail('requester_reply_agent', t, { body: b.body });
   }
   if (kind === 'note') {
     const mentioned = toArray(b.notify_user_ids).map(Number).filter(Boolean);
+    for (const uid of mentioned) await query('INSERT INTO ticket_mentions (ticket_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [t.id, uid]);
     for (const uid of mentioned) if (uid !== req.user.id) await notifyUser(uid, { type: 'note_mention', title: `${req.user.name} left you a note on #${t.id}`, body: b.body.slice(0, 140), link: `/tickets/${t.id}` });
   }
   const { rows: watchers } = await query('SELECT user_id FROM ticket_watchers WHERE ticket_id = $1', [t.id]);
@@ -525,6 +590,7 @@ router.delete('/:id/watch', asyncHandler(async (req, res) => {
 // ---------------------------------------------------------------- merge
 router.post('/:id/merge', asyncHandler(async (req, res) => {
   if (!isAgent(req.user)) throw forbidden();
+  if (!req.user.privileges.includes('merge_split_ticket')) throw forbidden('Your role does not allow merging tickets');
   const primary = await loadTicket(req.params.id, req.user);
   const ids = toArray(req.body.ticket_ids).map(Number).filter((n) => n && n !== primary.id);
   if (!ids.length) throw badRequest('ticket_ids required');
@@ -557,16 +623,20 @@ router.post('/:id/merge', asyncHandler(async (req, res) => {
 // ---------------------------------------------------------------- satisfaction
 router.post('/:id/satisfaction', asyncHandler(async (req, res) => {
   const t = await loadTicket(req.params.id, req.user);
-  const rating = toInt(req.body.rating);
-  if (!rating || rating < 1 || rating > 5) throw badRequest('rating must be 1-5');
+  const { rows: [survey] } = await query('SELECT * FROM surveys WHERE is_active = TRUE ORDER BY id LIMIT 1');
+  const labels = survey?.labels?.length >= 2 ? survey.labels : ['1', '2', '3', '4', '5'];
+  const answer = toInt(req.body.rating);
+  if (!answer || answer < 1 || answer > labels.length) throw badRequest(`rating must be 1-${labels.length}`);
+  // Stored on a common 1-5 scale so reports stay comparable across surveys.
+  const rating = Math.round(1 + ((answer - 1) * 4) / (labels.length - 1));
   if (isAgent(req.user)) throw forbidden('Only the requester can rate a ticket');
   if (!['resolved', 'closed'].includes(t.status)) throw badRequest('You can rate a ticket once it is resolved');
   const { rows } = await query(
-    `INSERT INTO satisfaction_ratings (ticket_id, contact_id, agent_id, rating, feedback)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (ticket_id) DO UPDATE SET rating = EXCLUDED.rating, feedback = EXCLUDED.feedback, created_at = NOW()
+    `INSERT INTO satisfaction_ratings (ticket_id, contact_id, agent_id, rating, feedback, survey_id, answer)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (ticket_id) DO UPDATE SET rating = EXCLUDED.rating, feedback = EXCLUDED.feedback, survey_id = EXCLUDED.survey_id, answer = EXCLUDED.answer, created_at = NOW()
      RETURNING *`,
-    [t.id, req.user.id, t.responder_id, rating, req.body.feedback || null]
+    [t.id, req.user.id, t.responder_id, rating, req.body.feedback || null, survey?.id || null, labels[answer - 1]]
   );
   await logActivity(t.id, req.user, 'rated', { rating });
   if (t.responder_id) await notifyUser(t.responder_id, { type: 'csat', title: `${req.user.name} rated ticket #${t.id}: ${rating}/5`, body: req.body.feedback || '', link: `/tickets/${t.id}` });
