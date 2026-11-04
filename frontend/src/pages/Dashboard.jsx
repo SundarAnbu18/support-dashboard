@@ -58,7 +58,7 @@ function TodayOverview({ go }) {
   const hourly = d.hourly.map((h) => ({ hour: h.hour, Today: Number(h.today), Yesterday: Number(h.yesterday) }));
   return (
     <>
-      <div className="row wrap mb-2">
+      <div className="filters-row">
         <Select small aria-label="Filter by group" value={filters.group_id} placeholder="All groups" onChange={(v) => setFilters({ ...filters, group_id: v })} options={lookups.groups.map((g) => ({ value: String(g.id), label: g.name }))} />
         <Select small aria-label="Filter by product" value={filters.product_id} placeholder="All products" onChange={(v) => setFilters({ ...filters, product_id: v })} options={lookups.products.map((p) => ({ value: String(p.id), label: p.name }))} />
       </div>
@@ -76,7 +76,7 @@ function TodayOverview({ go }) {
           <div className="card-body"><ResponsiveContainer width="100%" height="100%">
             <LineChart data={hourly} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="hour" tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fontSize: 11 }} /><Tooltip /><Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey="Today" stroke="#2563eb" strokeWidth={2} dot={false} /><Line type="monotone" dataKey="Yesterday" stroke="#94a3b8" strokeWidth={2} strokeDasharray="4 3" dot={false} />
+              <Line type="monotone" dataKey="Today" stroke="#BF2026" strokeWidth={2} dot={false} /><Line type="monotone" dataKey="Yesterday" stroke="#94a3b8" strokeWidth={2} strokeDasharray="4 3" dot={false} />
             </LineChart>
           </ResponsiveContainer></div>
         </div>
@@ -115,18 +115,18 @@ export default function Dashboard() {
 
       <div className="grid grid-3 mb-3" style={{ gridTemplateColumns: '2fr 1fr 1fr' }}>
         <div className="card chart-card">
-          <div className="card-header"><h3>Ticket volume · last 14 days</h3><div className="legend"><span><i style={{ background: '#2563eb' }} />Created</span><span><i style={{ background: '#16a34a' }} />Resolved</span></div></div>
+          <div className="card-header"><h3>Ticket volume · last 14 days</h3><div className="legend"><span><i style={{ background: '#BF2026' }} />Created</span><span><i style={{ background: '#16a34a' }} />Resolved</span></div></div>
           <div className="card-body">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={trend} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
-                  <linearGradient id="gc" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2563eb" stopOpacity={.3} /><stop offset="100%" stopColor="#2563eb" stopOpacity={0} /></linearGradient>
+                  <linearGradient id="gc" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#BF2026" stopOpacity={.3} /><stop offset="100%" stopColor="#BF2026" stopOpacity={0} /></linearGradient>
                   <linearGradient id="gr" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#16a34a" stopOpacity={.3} /><stop offset="100%" stopColor="#16a34a" stopOpacity={0} /></linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="day" tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
                 <Tooltip />
-                <Area type="monotone" dataKey="created" stroke="#2563eb" fill="url(#gc)" strokeWidth={2} />
+                <Area type="monotone" dataKey="created" stroke="#BF2026" fill="url(#gc)" strokeWidth={2} />
                 <Area type="monotone" dataKey="resolved" stroke="#16a34a" fill="url(#gr)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>

@@ -67,7 +67,7 @@ export const SLA_LABELS = {
 };
 
 export const avatarColor = (seed = '') => {
-  const palette = ['#2563eb', '#7c3aed', '#db2777', '#059669', '#d97706', '#0891b2', '#dc2626', '#4f46e5'];
+  const palette = ['#BF2026', '#7c3aed', '#db2777', '#059669', '#d97706', '#0891b2', '#F68721', '#4f46e5'];
   let h = 0;
   for (const ch of String(seed)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return palette[h % palette.length];

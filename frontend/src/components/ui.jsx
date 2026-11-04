@@ -189,7 +189,7 @@ export function Tabs({ tabs, active, onChange }) {
 export function StatCard({ label, value, hint, tone, icon: Icon, onClick }) {
   return (
     <div className="card stat" onClick={onClick}>
-      <div className="label">{Icon && <Icon size={14} />}{label}</div>
+      <div className="row-between"><div className="label">{label}</div>{Icon && <span className={`stat-icon ${tone || ''}`}><Icon size={15} /></span>}</div>
       <div className={`value ${tone || ''}`}>{value ?? '—'}</div>
       {hint && <div className="hint">{hint}</div>}
     </div>

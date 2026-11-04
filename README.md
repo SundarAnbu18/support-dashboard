@@ -1,4 +1,4 @@
-# SupportDesk
+# Wadhwani Support
 
 A full-featured help desk (Freshdesk-style) built with **React**, **Node.js/Express** and **PostgreSQL**.
 

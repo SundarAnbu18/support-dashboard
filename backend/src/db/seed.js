@@ -34,7 +34,7 @@ async function main() {
   for (const [name, email, role, title] of agentsData) {
     const { rows } = await query(
       'INSERT INTO users (name, email, password_hash, role, job_title, signature) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
-      [name, email, hash, role, title, `Best regards,\n${name}\n${title} · SupportDesk`]
+      [name, email, hash, role, title, `Best regards,\n${name}\n${title} · Wadhwani Foundation`]
     );
     agents.push(rows[0]);
   }
@@ -160,7 +160,7 @@ async function main() {
   const kb = [
     ['Getting Started', 'Everything you need to set up your account', [
       ['Account setup', [
-        ['Creating your account', 'To create an account, click Sign up on the login page and fill in your name, work email and a password of at least 6 characters.\n\nIf your company already uses SupportDesk, your account is linked to it automatically based on your email domain.\n\nAfter signing up you can immediately submit tickets and track them in the portal.'],
+        ['Creating your account', 'To create an account, click Sign up on the login page and fill in your name, work email and a password of at least 6 characters.\n\nIf your company already uses Wadhwani Support, your account is linked to it automatically based on your email domain.\n\nAfter signing up you can immediately submit tickets and track them in the portal.'],
         ['Inviting teammates', 'Account admins can invite teammates from Admin > Agents. Each agent receives a login and can be added to one or more groups.\n\nGroups control which tickets an agent sees by default and who gets notified about new tickets.'],
         ['Resetting your password', 'Use the Forgot password link on the login page. A reset link is emailed to you and remains valid for 30 minutes.\n\nIf you do not receive the email within a few minutes, check your spam folder or contact support.'],
       ]],
@@ -186,7 +186,7 @@ async function main() {
       ['Integrations & API', [
         ['Generating an API key', 'API keys are created under Admin > Integrations > API. Keys are shown once; store them securely. Rotate keys at least every 90 days.\n\nAll requests must include the header Authorization: Bearer <key>.'],
         ['Webhook delivery failures', 'Webhooks retry 5 times with exponential backoff. Check that your endpoint responds with a 2xx status within 10 seconds, and that it accepts POST requests with a JSON body.'],
-        ['Slack integration setup', 'Install the SupportDesk Slack app from Admin > Integrations. Choose a channel for new ticket notifications and optionally enable reply-from-Slack for agents.'],
+        ['Slack integration setup', 'Install the Wadhwani Support Slack app from Admin > Integrations. Choose a channel for new ticket notifications and optionally enable reply-from-Slack for agents.'],
       ]],
     ]],
   ];
@@ -223,7 +223,7 @@ async function main() {
   );
   await query(
     `INSERT INTO settings (key, value) VALUES
-     ('helpdesk', '{"name":"SupportDesk","portal_name":"SupportDesk Help Center","support_email":"support@supportdesk.local","primary_color":"#2563eb","time_zone":"America/New_York","portal_signup_enabled":true}'),
+     ('helpdesk', '{"name":"Wadhwani Support","portal_name":"Help Center","support_email":"support@supportdesk.local","primary_color":"#BF2026","time_zone":"America/New_York","portal_signup_enabled":true}'),
      ('tickets', '{"default_priority":"low","default_status":"open","auto_close_after_days":7,"allow_customer_close":true,"csat_enabled":true,"agent_collision":true}')`
   );
 

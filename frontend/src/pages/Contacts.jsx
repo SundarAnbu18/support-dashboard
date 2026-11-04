@@ -83,9 +83,19 @@ export default function Contacts() {
   const dq = useDebounce(q, 300);
   const page = Number(params.get('page') || 1);
   const companyId = params.get('company_id') || '';
+  const tag = params.get('tag') || '';
+  const blocked = params.get('blocked') || '';
+  const sortKey = params.get('sort') || 'name';
+  // Filters live in the URL so a filtered list can be bookmarked or shared.
+  const setParam = (k, v) => { const n = new URLSearchParams(params); n.delete('page'); v ? n.set(k, v) : n.delete(k); setParams(n); };
+  const SORTS = { name: ['name', 'asc'], newest: ['created_at', 'desc'], company: ['company', 'asc'] };
+  const hasFilters = companyId || tag || blocked;
 
   useEffect(() => { get('/companies', { per_page: 200 }).then((r) => setCompanies(r.data)); }, []);
-  const load = useCallback(() => get('/contacts', { q: dq || undefined, page, company_id: companyId || undefined, per_page: 25 }).then(setData), [dq, page, companyId]);
+  const load = useCallback(() => {
+    const [sort, order] = SORTS[sortKey] || SORTS.name;
+    return get('/contacts', { q: dq || undefined, page, company_id: companyId || undefined, tag: tag || undefined, blocked: blocked || undefined, sort, order, per_page: 25 }).then(setData);
+  }, [dq, page, companyId, tag, blocked, sortKey]); // eslint-disable-line
   useEffect(() => { load(); }, [load]);
 
   return (
@@ -93,11 +103,18 @@ export default function Contacts() {
       <div className="page-header">
         <div><h1>Contacts</h1><p className="sub">{data ? `${data.meta.total} people` : ''}</p></div>
         <div className="page-actions">
-          <div style={{ position: 'relative' }}><Search size={15} style={{ position: 'absolute', left: 10, top: 10, color: 'var(--gray-400)' }} /><input className="input" style={{ paddingLeft: 32, width: 260 }} placeholder="Search contacts…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-          <Select value={companyId} placeholder="All companies" onChange={(v) => { const n = new URLSearchParams(params); n.delete('page'); v ? n.set('company_id', v) : n.delete('company_id'); setParams(n); }} options={companies.map((c) => ({ value: String(c.id), label: c.name }))} />
           <ImportExport path="/contacts" name="contacts" onDone={load} />
           <button className="btn btn-primary" onClick={() => setModal(true)}><Plus size={16} /> New contact</button>
         </div>
+      </div>
+      <div className="filters-row">
+        <div className="search"><Search size={15} /><input className="input" placeholder="Search name, email, phone…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <Select value={companyId} placeholder="All companies" onChange={(v) => setParam('company_id', v)} options={companies.map((c) => ({ value: String(c.id), label: c.name }))} />
+        <Select value={tag} placeholder="Any tag" onChange={(v) => setParam('tag', v)} options={['vip', 'partner', 'trial']} />
+        <Select value={blocked} placeholder="Active & blocked" onChange={(v) => setParam('blocked', v)} options={[{ value: 'false', label: 'Active only' }, { value: 'true', label: 'Blocked only' }]} />
+        {hasFilters && <button className="btn-link small" onClick={() => { const n = new URLSearchParams(params); ['company_id', 'tag', 'blocked', 'page'].forEach((k) => n.delete(k)); setParams(n); }}>Clear filters</button>}
+        <span className="spacer" />
+        <Select aria-label="Sort" value={sortKey} onChange={(v) => setParam('sort', v)} options={[{ value: 'name', label: 'Sort: Name A–Z' }, { value: 'newest', label: 'Sort: Newest first' }, { value: 'company', label: 'Sort: Company' }]} />
       </div>
       <div className="card">
         {!data ? <Spinner block /> : data.data.length === 0 ? <EmptyState icon={Users} title="No contacts found" /> : (

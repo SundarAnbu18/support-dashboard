@@ -90,7 +90,7 @@ export default function KnowledgeBase() {
                     </button>
                   );
                 })}
-                <button style={{ paddingLeft: 24, color: 'var(--blue-600)', fontSize: 12.5 }} onClick={() => setModal({ kind: 'folder', initial: { category_id: c.id } })}><span><FolderPlus size={12} style={{ verticalAlign: -2, marginRight: 6 }} />Add folder</span></button>
+                <button style={{ paddingLeft: 24, color: 'var(--primary-600)', fontSize: 12.5 }} onClick={() => setModal({ kind: 'folder', initial: { category_id: c.id } })}><span><FolderPlus size={12} style={{ verticalAlign: -2, marginRight: 6 }} />Add folder</span></button>
               </div>
             ))}
           </div>

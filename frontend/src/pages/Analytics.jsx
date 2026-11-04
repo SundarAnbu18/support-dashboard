@@ -8,7 +8,7 @@ import { useToast } from '../context/ToastContext.jsx';
 import { Avatar, Badge, EmptyState, Field, Modal, Select, Spinner } from '../components/ui.jsx';
 import { STATUS_OPTIONS, PRIORITY_OPTIONS, titleCase } from '../utils/format.js';
 
-const COLORS = ['#2563eb', '#059669', '#d97706', '#7c3aed'];
+const COLORS = ['#BF2026', '#059669', '#d97706', '#7c3aed'];
 const TIME = ['day', 'week', 'month', 'hour'];
 const EMPTY = { metrics: ['tickets_created'], dimension: 'status', days: 30, chart: 'bar' };
 

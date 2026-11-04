@@ -37,7 +37,7 @@ function GlobalSearch() {
           {results.companies.map((c) => <a key={c.id} href={`/companies/${c.id}`} onMouseDown={(e) => { e.preventDefault(); go(`/companies/${c.id}`); }}><Building2 size={16} /><span>{c.name}</span></a>)}
           {results.articles.length > 0 && <div className="group-title">Knowledge base</div>}
           {results.articles.map((a) => <a key={a.id} href={`/solutions/articles/${a.id}`} onMouseDown={(e) => { e.preventDefault(); go(`/solutions/articles/${a.id}`); }}><BookOpen size={16} /><span className="flex-1 truncate">{a.title}</span><span className="badge badge-gray">{a.status}</span></a>)}
-          {total > 0 && <a href={`/tickets?q=${encodeURIComponent(dq)}`} onMouseDown={(e) => { e.preventDefault(); go(`/tickets?q=${encodeURIComponent(dq)}`); }} style={{ color: 'var(--blue-600)', justifyContent: 'center' }}>Search all tickets for "{dq}"</a>}
+          {total > 0 && <a href={`/tickets?q=${encodeURIComponent(dq)}`} onMouseDown={(e) => { e.preventDefault(); go(`/tickets?q=${encodeURIComponent(dq)}`); }} style={{ color: 'var(--primary-600)', justifyContent: 'center' }}>Search all tickets for "{dq}"</a>}
         </div>
       )}
     </div>
@@ -119,8 +119,8 @@ export default function Layout() {
     <div className="app-shell">
       <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-brand">
-          <span className="logo"><Headset size={18} color="#fff" /></span>
-          <span className="brand-text">SupportDesk</span>
+          <img className="brand-logo" src="/brand/wadhwani-logo.png" alt="Wadhwani Foundation" />
+          <img className="brand-mark" src="/brand/wadhwani-mark.png" alt="Wadhwani Foundation" />
         </div>
         <nav className="sidebar-nav">
           {nav.map((n) => (

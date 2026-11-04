@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Headset, CheckCircle2 } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { errorMessage } from '../api/client.js';
 import { Field } from '../components/ui.jsx';
@@ -29,14 +29,14 @@ export default function Login() {
     <div className="auth-page">
       <div className="auth-hero">
         <div className="row" style={{ gap: 12 }}>
-          <span style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(255,255,255,.15)', display: 'grid', placeItems: 'center' }}><Headset size={24} /></span>
-          <span style={{ fontSize: 22, fontWeight: 700 }}>SupportDesk</span>
+          <img src="/brand/wadhwani-logo.png" alt="Wadhwani Foundation" style={{ height: 72, width: 'auto' }} />
+          <span style={{ fontSize: 22, fontWeight: 600 }}>Support</span>
         </div>
         <h1>Every conversation, one inbox.</h1>
         <p>A complete help desk with ticketing, SLAs, automations, knowledge base, customer portal and reporting.</p>
         <ul>
           {['Omnichannel ticket inbox with views & bulk actions', 'SLA policies with breach alerts', 'Automation rules & round-robin assignment', 'Knowledge base and self-service portal', 'Agent, group and CSAT reporting'].map((t) => (
-            <li key={t}><CheckCircle2 size={18} color="#86efac" /> {t}</li>
+            <li key={t}><CheckCircle2 size={18} color="#BF2026" /> {t}</li>
           ))}
         </ul>
       </div>

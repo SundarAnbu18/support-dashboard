@@ -74,17 +74,26 @@ export default function Companies() {
   const [q, setQ] = useState('');
   const dq = useDebounce(q, 300);
   const page = Number(params.get('page') || 1);
-  const load = useCallback(() => get('/companies', { q: dq || undefined, page, per_page: 25 }).then(setData), [dq, page]);
+  const health = params.get('health') || '';
+  const sortKey = params.get('sort') || 'name';
+  const setParam = (k, v) => { const n = new URLSearchParams(params); n.delete('page'); v ? n.set(k, v) : n.delete(k); setParams(n); };
+  const load = useCallback(() => get('/companies', { q: dq || undefined, page, health_score: health || undefined, sort: sortKey === 'newest' ? 'created_at' : 'name', order: sortKey === 'newest' ? 'desc' : 'asc', per_page: 25 }).then(setData), [dq, page, health, sortKey]);
   useEffect(() => { load(); }, [load]);
   return (
     <div className="content">
       <div className="page-header">
         <div><h1>Companies</h1><p className="sub">{data ? `${data.meta.total} accounts` : ''}</p></div>
         <div className="page-actions">
-          <div style={{ position: 'relative' }}><Search size={15} style={{ position: 'absolute', left: 10, top: 10, color: 'var(--gray-400)' }} /><input className="input" style={{ paddingLeft: 32, width: 260 }} placeholder="Search companies…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
           <ImportExport path="/companies" name="companies" onDone={load} />
           <button className="btn btn-primary" onClick={() => setModal(true)}><Plus size={16} /> New company</button>
         </div>
+      </div>
+      <div className="filters-row">
+        <div className="search"><Search size={15} /><input className="input" placeholder="Search name or domain…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <Select value={health} placeholder="Any health" onChange={(v) => setParam('health', v)} options={[{ value: 'happy', label: 'Happy' }, { value: 'neutral', label: 'Neutral' }, { value: 'at_risk', label: 'At risk' }]} />
+        {health && <button className="btn-link small" onClick={() => setParam('health', '')}>Clear filters</button>}
+        <span className="spacer" />
+        <Select aria-label="Sort" value={sortKey} onChange={(v) => setParam('sort', v)} options={[{ value: 'name', label: 'Sort: Name A–Z' }, { value: 'newest', label: 'Sort: Newest first' }]} />
       </div>
       <div className="card">
         {!data ? <Spinner block /> : data.data.length === 0 ? <EmptyState icon={Building2} title="No companies found" /> : (

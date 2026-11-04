@@ -7,7 +7,7 @@ import { get } from '../api/client.js';
 import { Spinner, StatCard, Tabs, Avatar, Badge } from '../components/ui.jsx';
 import { fmtHours, fmtMinutes, titleCase } from '../utils/format.js';
 
-const COLORS = ['#2563eb', '#7c3aed', '#db2777', '#059669', '#d97706', '#0891b2', '#dc2626', '#4f46e5'];
+const COLORS = ['#BF2026', '#7c3aed', '#db2777', '#059669', '#d97706', '#0891b2', '#F68721', '#4f46e5'];
 const STATUS_COLORS = { open: '#ef4444', pending: '#f59e0b', resolved: '#16a34a', closed: '#94a3b8' };
 const PRIORITY_COLORS = { low: '#16a34a', medium: '#3b82f6', high: '#f59e0b', urgent: '#ef4444' };
 
@@ -84,7 +84,7 @@ function Overview({ d, tags }) {
         <StatCard label="CSAT" value={d.csat.score_pct !== null ? `${d.csat.score_pct}%` : '—'} hint={`${d.csat.responses} responses · avg ${d.csat.avg_rating ?? '—'}/5`} tone="ok" />
       </div>
       <div className="card chart-card mb-3"><div className="card-header"><h3>Created vs resolved</h3></div><div className="card-body">
-        <ResponsiveContainer width="100%" height="100%"><BarChart data={trend} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="day" tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fontSize: 11 }} /><Tooltip /><Legend wrapperStyle={{ fontSize: 12 }} /><Bar dataKey="created" fill="#2563eb" radius={[3, 3, 0, 0]} /><Bar dataKey="resolved" fill="#16a34a" radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer>
+        <ResponsiveContainer width="100%" height="100%"><BarChart data={trend} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="day" tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fontSize: 11 }} /><Tooltip /><Legend wrapperStyle={{ fontSize: 12 }} /><Bar dataKey="created" fill="#BF2026" radius={[3, 3, 0, 0]} /><Bar dataKey="resolved" fill="#16a34a" radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer>
       </div></div>
       <div className="grid grid-4 mb-3">
         <div className="card chart-card"><div className="card-header"><h3>By status</h3></div><div className="card-body"><Donut data={d.by_status} colors={STATUS_COLORS} /></div></div>
@@ -111,7 +111,7 @@ function AgentsReport({ rows }) {
               <td className="num">{a.assigned}</td><td className="num">{a.resolved}</td><td className="num">{a.open}</td><td className="num">{a.replies}</td><td className="num">{fmtHours(a.avg_first_response_hours)}</td><td className="num">{fmtHours(a.avg_resolution_hours)}</td>
               <td className="num">{Number(a.resolved) ? `${Math.round((Number(a.resolved_in_sla) / Number(a.resolved)) * 100)}%` : '—'}</td><td className="num">{a.csat ? `${a.csat} (${a.csat_responses})` : '—'}</td><td className="num">{fmtMinutes(a.minutes_logged)}</td></tr>
           ))}</tbody></table></div></div>
-      <div className="card chart-card"><div className="card-header"><h3>Resolved tickets by agent</h3></div><div className="card-body"><ResponsiveContainer width="100%" height="100%"><BarChart data={rows.map((r) => ({ name: r.name.split(' ')[0], resolved: Number(r.resolved), assigned: Number(r.assigned) }))} margin={{ top: 10, right: 10, left: -20 }}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="name" tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fontSize: 11 }} /><Tooltip /><Legend wrapperStyle={{ fontSize: 12 }} /><Bar dataKey="assigned" fill="#94a3b8" radius={[3, 3, 0, 0]} /><Bar dataKey="resolved" fill="#2563eb" radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer></div></div>
+      <div className="card chart-card"><div className="card-header"><h3>Resolved tickets by agent</h3></div><div className="card-body"><ResponsiveContainer width="100%" height="100%"><BarChart data={rows.map((r) => ({ name: r.name.split(' ')[0], resolved: Number(r.resolved), assigned: Number(r.assigned) }))} margin={{ top: 10, right: 10, left: -20 }}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="name" tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fontSize: 11 }} /><Tooltip /><Legend wrapperStyle={{ fontSize: 12 }} /><Bar dataKey="assigned" fill="#94a3b8" radius={[3, 3, 0, 0]} /><Bar dataKey="resolved" fill="#BF2026" radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer></div></div>
     </>
   );
 }

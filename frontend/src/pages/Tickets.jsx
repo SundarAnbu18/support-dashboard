@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { Filter, X, Save, Trash2, UserCheck, ArrowUpDown, RefreshCw, Paperclip, MessageSquare, Inbox, Download, Search, LayoutList, Table2, Play, MailWarning } from 'lucide-react';
+import { Filter, X, Save, Trash2, UserCheck, ArrowUpDown, RefreshCw, Paperclip, MessageSquare, Inbox, Download, Search, LayoutList, Table2, MailWarning, SlidersHorizontal, ChevronDown, ChevronUp } from 'lucide-react';
 import { get, post, patch, del, downloadFile, errorMessage } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { Spinner, StatusBadge, PriorityBadge, SlaPill, Avatar, Pagination, EmptyState, Select, Modal, Field, useDebounce } from '../components/ui.jsx';
-import { fmtRelative, fmtDue, statusOptions, PRIORITY_OPTIONS, TYPE_OPTIONS, SOURCE_OPTIONS, titleCase } from '../utils/format.js';
+import { fmtRelative, fmtDue, statusOptions, PRIORITY_OPTIONS, TYPE_OPTIONS, SOURCE_OPTIONS, STATUS_LABELS, PRIORITY_LABELS, titleCase } from '../utils/format.js';
 
 const VIEWS = [
   { key: 'all', label: 'All tickets', count: 'all_tickets' },
@@ -27,6 +27,20 @@ const VIEWS = [
   { key: 'trash', label: 'Trash', count: 'trash' },
 ];
 const FILTER_KEYS = ['status', 'priority', 'type', 'source', 'responder_id', 'group_id', 'product_id', 'tags', 'created_from', 'created_to', 'due_from', 'due_to', 'resolved_from', 'resolved_to', 'closed_from', 'closed_to'];
+const FILTER_LABELS = { status: 'Status', priority: 'Priority', type: 'Type', source: 'Source', responder_id: 'Agent', group_id: 'Group', product_id: 'Product', tags: 'Tag', created_from: 'Created from', created_to: 'Created to', due_from: 'Due from', due_to: 'Due to', resolved_from: 'Resolved from', resolved_to: 'Resolved to', closed_from: 'Closed from', closed_to: 'Closed to' };
+const EMPTY_FILTERS = Object.fromEntries(FILTER_KEYS.map((k) => [k, []]));
+
+const isoDaysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
+// One-click filters shown above the list. `is` reads the current filters; `on`/`off` are the param changes a click makes.
+const quickFilters = (me) => [
+  { key: 'mine', label: 'Assigned to me', is: (f) => f.responder_id.includes(String(me)), on: { responder_id: [String(me)] }, off: { responder_id: [] } },
+  { key: 'unassigned', label: 'Unassigned', is: (f) => f.responder_id.includes('none'), on: { responder_id: ['none'] }, off: { responder_id: [] } },
+  { key: 'hot', label: 'Urgent & high', is: (f) => f.priority.includes('urgent') && f.priority.includes('high'), on: { priority: ['urgent', 'high'] }, off: { priority: [] } },
+  { key: 'open', label: 'Open', is: (f) => f.status.length === 1 && f.status[0] === 'open', on: { status: ['open'] }, off: { status: [] } },
+  { key: 'pending', label: 'Pending', is: (f) => f.status.length === 1 && f.status[0] === 'pending', on: { status: ['pending'] }, off: { status: [] } },
+  { key: 'today', label: 'Created today', is: (f) => f.created_from[0] === isoDaysAgo(0) && !f.created_to.length, on: { created_from: [isoDaysAgo(0)], created_to: [] }, off: { created_from: [], created_to: [] } },
+  { key: 'week', label: 'Last 7 days', is: (f) => f.created_from[0] === isoDaysAgo(7) && !f.created_to.length, on: { created_from: [isoDaysAgo(7)], created_to: [] }, off: { created_from: [], created_to: [] } },
+];
 
 function MultiCheck({ options, value = [], onChange, labels = {} }) {
   const toggle = (v) => onChange(value.includes(v) ? value.filter((x) => x !== v) : [...value, v]);
@@ -67,6 +81,7 @@ export default function Tickets() {
   const page = Number(params.get('page') || 1);
   const filters = useMemo(() => Object.fromEntries(FILTER_KEYS.map((k) => [k, params.getAll(k)])), [params]);
   const activeFilterCount = FILTER_KEYS.reduce((n, k) => n + (filters[k].length ? 1 : 0), 0);
+  const [showFilters, setShowFilters] = useState(() => activeFilterCount > 0);
 
   const update = useCallback((changes, resetPage = true) => {
     const next = new URLSearchParams(params);
@@ -105,7 +120,20 @@ export default function Tickets() {
     next.set('view', v.filters?.view || 'all');
     setParams(next);
   };
-  const clearFilters = () => update(Object.fromEntries(FILTER_KEYS.map((k) => [k, []])));
+  const clearFilters = () => update(EMPTY_FILTERS);
+  const quick = useMemo(() => quickFilters(user.id), [user.id]);
+
+  // Every applied filter value as a removable chip, with ids resolved to names.
+  const filterValueLabel = (k, v) => {
+    if (k === 'responder_id') return v === 'none' ? 'Unassigned' : v === String(user.id) ? 'Me' : agents.find((a) => String(a.id) === v)?.name || v;
+    if (k === 'group_id') return groups.find((g) => String(g.id) === v)?.name || v;
+    if (k === 'product_id') return products.find((p) => String(p.id) === v)?.name || v;
+    if (k === 'status') return STATUS_LABELS[v] || titleCase(v);
+    if (k === 'priority') return PRIORITY_LABELS[v] || titleCase(v);
+    if (k === 'tags' || k.endsWith('_from') || k.endsWith('_to')) return v;
+    return titleCase(v);
+  };
+  const activeChips = FILTER_KEYS.flatMap((k) => filters[k].map((v) => ({ key: `${k}:${v}`, name: FILTER_LABELS[k], value: filterValueLabel(k, v), remove: () => update({ [k]: filters[k].filter((x) => x !== v) }) })));
 
   // Exports everything matching the current view and filters, not just this page.
   const exportCsv = () => {
@@ -134,37 +162,39 @@ export default function Tickets() {
       <div className="ticket-layout">
         <aside className="filter-panel">
           <div style={{ position: 'relative' }}><Search size={14} style={{ position: 'absolute', left: 9, top: 9, color: 'var(--gray-400)' }} /><input className="input input-sm" style={{ paddingLeft: 28 }} aria-label="Search for a view" placeholder="Search for a view" value={viewSearch} onChange={(e) => setViewSearch(e.target.value)} /></div>
+          <div>
+            <button className="panel-toggle" onClick={() => setShowFilters((s) => !s)} aria-expanded={showFilters}><Filter size={13} /> Filters {activeFilterCount > 0 && <span className="badge badge-red">{activeFilterCount}</span>}{showFilters ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
+            {showFilters && (
+            <div className="col mt-2" style={{ gap: 14 }}>
+              <Field label="Status"><MultiCheck options={statusOptions()} value={filters.status} onChange={(v) => update({ status: v })} /></Field>
+              <Field label="Priority"><MultiCheck options={PRIORITY_OPTIONS} value={filters.priority} onChange={(v) => update({ priority: v })} /></Field>
+              <Field label="Agent"><Select small placeholder="Any agent" value={filters.responder_id[0] || ''} onChange={(v) => update({ responder_id: v ? [v] : [] })} options={[{ value: 'none', label: 'Unassigned' }, { value: String(user.id), label: 'Me' }, ...agents.filter((a) => a.id !== user.id).map((a) => ({ value: String(a.id), label: a.name }))]} /></Field>
+              <Field label="Group"><Select small placeholder="Any group" value={filters.group_id[0] || ''} onChange={(v) => update({ group_id: v ? [v] : [] })} options={groups.map((g) => ({ value: String(g.id), label: g.name }))} /></Field>
+              {products.length > 0 && <Field label="Product"><Select small placeholder="Any product" value={filters.product_id[0] || ''} onChange={(v) => update({ product_id: v ? [v] : [] })} options={products.map((p) => ({ value: String(p.id), label: p.name }))} /></Field>}
+              <Field label="Type"><Select small placeholder="Any type" value={filters.type[0] || ''} onChange={(v) => update({ type: v ? [v] : [] })} options={TYPE_OPTIONS} /></Field>
+              <Field label="Source"><Select small placeholder="Any source" value={filters.source[0] || ''} onChange={(v) => update({ source: v ? [v] : [] })} options={SOURCE_OPTIONS} /></Field>
+              <Field label="Tag"><Select small placeholder="Any tag" value={filters.tags[0] || ''} onChange={(v) => update({ tags: v ? [v] : [] })} options={tags.map((t) => ({ value: t.name, label: `${t.name} (${t.ticket_count})` }))} /></Field>
+              <Field label="Created between"><input type="date" aria-label="Created from" className="input input-sm" value={filters.created_from[0] || ''} onChange={(e) => update({ created_from: [e.target.value] })} /><input type="date" aria-label="Created to" className="input input-sm" value={filters.created_to[0] || ''} onChange={(e) => update({ created_to: [e.target.value] })} /></Field>
+              {[['due', 'Resolution due between'], ['resolved', 'Resolved between'], ['closed', 'Closed between']].map(([key, label]) => (
+                <Field key={key} label={label}><input type="date" aria-label={`${label} from`} className="input input-sm" value={filters[`${key}_from`][0] || ''} onChange={(e) => update({ [`${key}_from`]: [e.target.value] })} /><input type="date" aria-label={`${label} to`} className="input input-sm" value={filters[`${key}_to`][0] || ''} onChange={(e) => update({ [`${key}_to`]: [e.target.value] })} /></Field>
+              ))}
+              {activeFilterCount > 0 && <div className="row"><button className="btn btn-sm" onClick={() => setSaveView(true)}><Save size={13} /> Save as view</button><button className="btn btn-sm btn-ghost" onClick={clearFilters}>Clear</button></div>}
+            </div>
+            )}
+          </div>
           {personalViews.length > 0 && <div><h4>Personal</h4><div className="view-list">{personalViews.map(savedViewButton)}</div></div>}
           {sharedViews.length > 0 && <div><h4>Shared</h4><div className="view-list">{sharedViews.map(savedViewButton)}</div></div>}
           <div>
             <h4>Default</h4>
             <div className="view-list">
               {VIEWS.filter((v) => matchesViewSearch(v.label)).map((v) => (
-                <button key={v.key} className={view === v.key && activeFilterCount === 0 ? 'active' : view === v.key ? 'active' : ''} onClick={() => { clearFilters(); update({ view: v.key }); }}>
+                <button key={v.key} className={view === v.key ? 'active' : ''} onClick={() => update({ ...EMPTY_FILTERS, view: v.key })}>
                   <span>{v.label}</span>{v.count && counts[v.count] !== undefined && <span className="count">{counts[v.count]}</span>}
                 </button>
               ))}
             </div>
           </div>
           <div className="view-list"><Link className="row small muted" style={{ padding: '4px 8px', gap: 6 }} to="/undelivered"><MailWarning size={14} /> All undelivered messages</Link></div>
-          <div>
-            <div className="row-between"><h4 style={{ margin: 0 }}><Filter size={12} style={{ verticalAlign: -1 }} /> Filters {activeFilterCount > 0 && <span className="badge badge-blue">{activeFilterCount}</span>}</h4>{activeFilterCount > 0 && <button className="btn-link small" onClick={clearFilters}>Clear</button>}</div>
-            <div className="col mt-2" style={{ gap: 14 }}>
-              <Field label="Status"><MultiCheck options={statusOptions()} value={filters.status} onChange={(v) => update({ status: v })} /></Field>
-              <Field label="Priority"><MultiCheck options={PRIORITY_OPTIONS} value={filters.priority} onChange={(v) => update({ priority: v })} /></Field>
-              <Field label="Agent"><Select small placeholder="Any agent" value={filters.responder_id[0] || ''} onChange={(v) => update({ responder_id: v ? [v] : [] })} options={[{ value: 'none', label: 'Unassigned' }, ...agents.map((a) => ({ value: String(a.id), label: a.name }))]} /></Field>
-              <Field label="Group"><Select small placeholder="Any group" value={filters.group_id[0] || ''} onChange={(v) => update({ group_id: v ? [v] : [] })} options={groups.map((g) => ({ value: String(g.id), label: g.name }))} /></Field>
-              {products.length > 0 && <Field label="Product"><Select small placeholder="Any product" value={filters.product_id[0] || ''} onChange={(v) => update({ product_id: v ? [v] : [] })} options={products.map((p) => ({ value: String(p.id), label: p.name }))} /></Field>}
-              <Field label="Type"><Select small placeholder="Any type" value={filters.type[0] || ''} onChange={(v) => update({ type: v ? [v] : [] })} options={TYPE_OPTIONS} /></Field>
-              <Field label="Source"><Select small placeholder="Any source" value={filters.source[0] || ''} onChange={(v) => update({ source: v ? [v] : [] })} options={SOURCE_OPTIONS} /></Field>
-              <Field label="Tag"><Select small placeholder="Any tag" value={filters.tags[0] || ''} onChange={(v) => update({ tags: v ? [v] : [] })} options={tags.map((t) => ({ value: t.name, label: `${t.name} (${t.ticket_count})` }))} /></Field>
-              <Field label="Created between"><input type="date" className="input input-sm" value={filters.created_from[0] || ''} onChange={(e) => update({ created_from: [e.target.value] })} /><input type="date" className="input input-sm" value={filters.created_to[0] || ''} onChange={(e) => update({ created_to: [e.target.value] })} /></Field>
-              {[['due', 'Resolution due between'], ['resolved', 'Resolved between'], ['closed', 'Closed between']].map(([key, label]) => (
-                <Field key={key} label={label}><input type="date" aria-label={`${label} from`} className="input input-sm" value={filters[`${key}_from`][0] || ''} onChange={(e) => update({ [`${key}_from`]: [e.target.value] })} /><input type="date" aria-label={`${label} to`} className="input input-sm" value={filters[`${key}_to`][0] || ''} onChange={(e) => update({ [`${key}_to`]: [e.target.value] })} /></Field>
-              ))}
-              {activeFilterCount > 0 && <button className="btn btn-sm" onClick={() => setSaveView(true)}><Save size={13} /> Save as view</button>}
-            </div>
-          </div>
         </aside>
 
         <section className="ticket-list">
@@ -181,6 +211,16 @@ export default function Tickets() {
               <button className="btn btn-sm" aria-label={layout === 'card' ? 'Switch to table layout' : 'Switch to card layout'} title={layout === 'card' ? 'Table layout' : 'Card layout'} onClick={() => switchLayout(layout === 'card' ? 'table' : 'card')}>{layout === 'card' ? <Table2 size={14} /> : <LayoutList size={14} />}</button>
               {user.privileges?.includes('export_data') && <button className="btn btn-sm" onClick={exportCsv} title="Export all matching tickets to CSV"><Download size={14} /> Export</button>}
             </div>
+          </div>
+
+          <div className="chip-bar">
+            <span className="chip-bar-label"><SlidersHorizontal size={13} /> Quick</span>
+            {quick.map((c) => <button key={c.key} className={`chip ${c.is(filters) ? 'on' : ''}`} aria-pressed={c.is(filters)} onClick={() => update(c.is(filters) ? c.off : c.on)}>{c.label}</button>)}
+            {activeChips.length > 0 && <>
+              <span className="chip-sep" />
+              {activeChips.map((c) => <span key={c.key} className="chip active-filter">{c.name}: <b>{c.value}</b><button aria-label={`Remove filter ${c.name} ${c.value}`} onClick={c.remove}><X size={12} /></button></span>)}
+              <button className="btn-link small" onClick={clearFilters}>Clear all</button>
+            </>}
           </div>
 
           {selected.length > 0 && (

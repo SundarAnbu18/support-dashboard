@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, Link } from 'react-router-dom';
-import { Headset, LogOut, Ticket, BookOpen, Plus, LayoutDashboard, MessagesSquare } from 'lucide-react';
+import { LogOut, Ticket, BookOpen, Plus, LayoutDashboard, MessagesSquare } from 'lucide-react';
 import { get } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { Avatar, Dropdown } from './ui.jsx';
@@ -15,7 +15,7 @@ export default function PortalLayout() {
     <div className="portal-shell">
       <nav className="portal-nav">
         <div className="inner">
-          <Link to="/portal" className="brand"><span className="logo" style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--blue-600)', display: 'grid', placeItems: 'center' }}><Headset size={16} color="#fff" /></span> {brand}</Link>
+          <Link to="/portal" className="brand"><img className="brand-logo" src="/brand/wadhwani-logo.png" alt="Wadhwani Foundation" /> {brand}</Link>
           <div className="links">
             <NavLink to="/portal" end><BookOpen size={15} style={{ verticalAlign: -2, marginRight: 6 }} />Knowledge base</NavLink>
             <NavLink to="/portal/community"><MessagesSquare size={15} style={{ verticalAlign: -2, marginRight: 6 }} />Community</NavLink>

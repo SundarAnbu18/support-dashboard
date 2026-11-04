@@ -7,7 +7,7 @@ import { requireFields, buildUpdate, slugify } from '../utils/helpers.js';
 const router = Router();
 
 const DEFAULT_SETTINGS = {
-  helpdesk: { name: 'SupportDesk', portal_name: 'Help Center', support_email: 'support@supportdesk.local', primary_color: '#2563eb', language: 'en', time_zone: 'UTC', portal_signup_enabled: true },
+  helpdesk: { name: 'Wadhwani Support', portal_name: 'Help Center', support_email: 'support@supportdesk.local', primary_color: '#BF2026', language: 'en', time_zone: 'UTC', portal_signup_enabled: true },
   tickets: { default_priority: 'low', default_status: 'open', auto_close_after_days: 7, archive_after_days: 0, allow_customer_close: true, csat_enabled: true, agent_collision: true },
   notifications: { notify_assignee: true, notify_group_on_new: true, notify_requester_on_reply: true },
   security: { min_password_length: 8, signup_domains: [] },

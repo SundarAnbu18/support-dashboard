@@ -26,7 +26,7 @@ export default function CompanyDetail() {
       <div className="detail-layout">
         <div className="col gap-2">
           <div className="card"><div className="card-body row" style={{ gap: 18, alignItems: 'flex-start' }}>
-            <span className="avatar avatar-xl" style={{ background: 'var(--blue-50)', color: 'var(--blue-600)', borderRadius: 16 }}><Building2 size={30} /></span>
+            <span className="avatar avatar-xl" style={{ background: 'var(--primary-50)', color: 'var(--primary-600)', borderRadius: 16 }}><Building2 size={30} /></span>
             <div className="flex-1">
               <div className="row wrap"><h1>{c.name}</h1><Badge color="blue">{titleCase(c.account_tier)}</Badge><Badge color={HEALTH[c.health_score]}>{titleCase(c.health_score)}</Badge></div>
               <div className="muted">{c.industry}</div>
